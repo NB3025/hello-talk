@@ -612,3 +612,42 @@ button.row:hover { background: #fafafb; }
   display: flex; gap: 6px; padding: 0 12px 12px;
 }
 .giftbubble .gb-actions > * { flex: 1; padding: 9px; text-align: center; }
+
+/* ── 오픈 예정 배지 ─────────────────────────────────────────────────────
+   자리는 잡되 눌리지 않는 항목에 붙는다. 회색 계열로 두는 것이 중요하다 —
+   옐로를 쓰면 눌러도 되는 것처럼 보이고, 상단 탭의 `특가` 배지와도 헷갈린다. */
+.icongrid button,
+.gtabbar button {
+  position: relative;
+}
+
+.soon {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 9px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 999px;
+  background: #e3e3e8;
+  color: #6a6a72;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  white-space: nowrap;
+}
+
+/* 알약 버튼 안에서는 라벨 옆에 눕는다. */
+.soon.inline {
+  margin-top: 0;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* 하단 탭은 좁아서 우상단 코너에 짧게 붙인다 — 글리프를 덮지 않는 위치. */
+.soon.dot-only {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  margin-top: 0;
+  font-size: 8px;
+  padding: 2px 4px;
+}

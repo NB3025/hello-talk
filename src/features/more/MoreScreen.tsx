@@ -1,6 +1,8 @@
 import { useStore } from '../../store/StoreProvider';
 import { Avatar } from '../../ui/Avatar';
+import { ComingSoon } from '../../ui/ComingSoon';
 import { pendingGifts, usableGifts } from '../../domain/gift';
+import { comingSoonCount, roadmapFor } from '../../domain/roadmap';
 import type { User } from '../../domain/types';
 import type { GiftTab } from '../gift/GiftApp';
 
@@ -66,13 +68,13 @@ export function MoreScreen({
               주문내역
             </button>
 
-            <Inert glyph="📅" label="캘린더" />
-            <Inert glyph="😀" label="이모티콘" />
-            <Inert glyph="🛍" label="쇼핑하기" />
-            <Inert glyph="☁" label="톡클라우드" />
+            {roadmapFor('more')
+              .filter((i) => i.status === 'soon')
+              .map((i) => (
+                <ComingSoon key={i.id} item={i} />
+              ))}
           </div>
         </div>
-
         <p className="note">
           {usable > 0
             ? `사용할 수 있는 선물이 ${usable}개 있습니다.`
@@ -84,10 +86,12 @@ export function MoreScreen({
         <div className="divider" />
 
         <p className="note">
-          B안은 선물을 최상위 탭으로 올리지 않습니다. 하단 탭은 5개 그대로이고, 선물하기는 이
-          그리드나 친구 프로필에서만 열립니다. 열린 뒤에는 실제 카카오톡처럼 자체 탭을 가진 전체
-          화면으로 동작합니다 — 2열 상품 그리드가 시트 높이에서는 성립하지 않기 때문입니다.
-          캘린더는 다음 슬라이스에서 이 자리에 붙습니다.
+          하단 탭은 5개 그대로이고 선물하기는 이 그리드나 친구 프로필에서만 열립니다. 열린 뒤에는
+          실제 카카오톡처럼 자체 탭을 가진 전체 화면으로 동작합니다 — 2열 상품 그리드가 시트
+          높이에서는 성립하지 않기 때문입니다. <b>오픈 예정</b> 은 카카오 서비스를 조사해 추린
+          다음 목록이고, 이 그리드 밖(친구 프로필·선물하기·대화방)까지 합해 모두{' '}
+          {comingSoonCount()}개입니다. 무엇을 왜 넣는지는 <code>docs/ROADMAP.md</code> 에 근거와
+          출처까지 적혀 있습니다. 아이콘에 마우스를 올리면 한 줄 설명이 나옵니다.
         </p>
 
         <div className="actionsrow">
@@ -108,14 +112,3 @@ export function MoreScreen({
   );
 }
 
-/** 자리는 잡되 눌리지 않는 항목. 레퍼런스 그리드의 밀도가 정보 계층의 일부다. */
-function Inert({ glyph, label }: { glyph: string; label: string }) {
-  return (
-    <button disabled title="이번 범위 밖입니다">
-      <span className="ic" aria-hidden="true">
-        {glyph}
-      </span>
-      {label}
-    </button>
-  );
-}

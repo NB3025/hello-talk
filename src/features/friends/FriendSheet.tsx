@@ -1,6 +1,8 @@
 import { Avatar } from '../../ui/Avatar';
 import { Sheet } from '../../ui/Sheet';
+import { ComingSoonPill } from '../../ui/ComingSoon';
 import { useStore } from '../../store/StoreProvider';
+import { roadmapItem } from '../../domain/roadmap';
 import type { User } from '../../domain/types';
 
 /**
@@ -25,6 +27,7 @@ export function FriendSheet({
   const favorite = db.friendships.some(
     (f) => f.ownerId === me.id && f.friendId === friend.id && f.favorite,
   );
+  const scheduleItem = roadmapItem('schedule-from-friend');
 
   return (
     <Sheet title={friend.name} lead={friend.statusMessage || friend.code} onClose={onClose}>
@@ -45,15 +48,14 @@ export function FriendSheet({
         <button className="pill solid" onClick={() => onOpenGift(friend)}>
           🎁 선물하기
         </button>
-        <button className="pill" disabled title="캘린더 슬라이스에서 구현합니다">
-          📅 약속 잡기
-        </button>
+        {scheduleItem ? <ComingSoonPill item={scheduleItem} /> : null}
       </div>
 
       <p className="note">
-        선물하기는 B안대로 <b>이 자리</b>에서 시작합니다 — 별도 탭을 만들지 않고 사람에 붙이는
-        것이 B안의 전제입니다. 열리는 선물하기 화면은 실제 카카오톡처럼 자체 탭을 가진 전체 화면
-        이고, {friend.name} 님이 받는 사람으로 미리 선택됩니다. 약속 잡기는 다음 슬라이스입니다.
+        선물하기는 <b>이 자리</b>에서 시작합니다 — 별도 탭을 만들지 않고 사람에 붙이는 것이 이
+        배치의 전제입니다. 열리는 선물하기 화면은 실제 카카오톡처럼 자체 탭을 가진 전체 화면이고,{' '}
+        {friend.name} 님이 받는 사람으로 미리 선택됩니다. 일정도 같은 자리에서 시작할 예정입니다 —
+        카카오톡도 "채팅방에서 빠르게 일정을 만드는 것"이 톡캘린더의 정의입니다.
       </p>
 
       <div className="actionsrow">
