@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+
+# 에이전트 CLI 의 로컬 설정. 프로젝트 코드가 아니고 기계마다 다르다.
+.kiro/settings/
+
+# 레퍼런스 스크린샷은 버전 관리에 넣지 않는다. 실제 사용자의 이름과 프로필
+# 사진이 찍혀 있어 우리와 무관한 제3자의 개인정보다. 구조 분석은
+# references/gift/NOTES.md 에 텍스트로 남아 있으므로 개발에 지장이 없다.
+references/**/*.png
+references/**/*.jpg
+references/**/*.jpeg
+references/**/*.webp

@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<!--
+  PROTOTYPE / 버릴 코드 — hello-talk
+  질문: "카카오톡 셸(하단 탭 5개 고정, 캘린더 탭 없음)에 선물하기와 캘린더는 어디에 사는가?"
+  변형 3개를 ?variant=A|B|C 로 전환. 셸(채팅 목록·대화방·친구 목록)은 사용자가 준
+  스크린샷 3장을 그대로 따라 만들었고, 변형은 그 셸에 '붙는 방식'만 다르다.
+  판정이 끝나면 이긴 변형만 실제 코드로 다시 쓰고 이 파일은 버린다.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>선물하기·캘린더는 어디에 사는가 — UI 프로토타입</title>
+<style>
+  :root{
+    --kakao:#FEE500; --kakao-ink:#3C1E1E;
+    --room-bg:#B2C7D9; --unread:#FF3B30;
+    --ink:#111113; --sub:#8A8A8E; --line:#EFEFF2; --chip:#F1F1F3;
+    --page:#EDEEF0;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--page); color:var(--ink); padding:32px 20px 120px;
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .stage{display:flex; gap:32px; align-items:flex-start; justify-content:center; flex-wrap:wrap}
+
+  /* ── 폰 프레임 (평가 대상 아님, 그냥 액자) ── */
+  .phone{
+    width:390px; height:800px; flex:0 0 390px; background:#fff; border-radius:38px;
+    box-shadow:0 22px 60px rgba(0,0,0,.18); overflow:hidden; position:relative;
+    display:flex; flex-direction:column;
+  }
+  .notch{height:26px; flex:0 0 26px; background:#fff}
+  .screen{flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; position:relative}
+  .screen::-webkit-scrollbar{width:0}
+
+  /* ── 앱 상단바 ── */
+  .top{display:flex; align-items:center; gap:12px; padding:10px 16px 6px}
+  .top h1{font-size:21px; font-weight:800; margin:0; letter-spacing:-.03em; flex:1}
+  .top .icons{display:flex; gap:16px; color:#232326; font-size:17px}
+  .top .back{font-size:19px; color:#232326}
+  .top .roomname{font-size:17px; font-weight:700; flex:1; text-align:left; letter-spacing:-.02em}
+  .me{display:flex; align-items:center; gap:9px; flex:1}
+  .me .nm{font-size:17px; font-weight:700; letter-spacing:-.02em}
+
+  /* ── 칩 / 세그먼트 ── */
+  .chips{display:flex; gap:6px; padding:6px 16px 12px; overflow-x:auto}
+  .chips::-webkit-scrollbar{height:0}
+  .chip{
+    flex:0 0 auto; font-size:13px; padding:6px 13px; border-radius:999px;
+    background:var(--chip); color:#4A4A4F; display:flex; align-items:center; gap:5px; cursor:pointer;
+  }
+  .chip .n{color:#FF6B00; font-weight:700; font-size:12px}
+  .chip[aria-pressed="true"]{background:#111113; color:#fff}
+  .chip[aria-pressed="true"] .n{color:#FFD84D}
+  .seg{display:flex; gap:18px; padding:2px 16px 10px}
+  .seg span{font-size:15px; color:#B6B6BB; font-weight:700; cursor:pointer; padding-bottom:2px}
+  .seg span[aria-pressed="true"]{color:#111113; border-bottom:2px solid #111113}
+
+  /* ── 배너 ── */
+  .banner{
+    margin:0 14px 8px; background:#F6F6F8; border-radius:14px; padding:12px 14px;
+    display:flex; align-items:center; gap:10px;
+  }
+  .banner .t{flex:1; min-width:0}
+  .banner .t b{display:block; font-size:13.5px; letter-spacing:-.02em}
+  .banner .t span{font-size:12px; color:var(--sub)}
+  .banner .ems{display:flex; gap:-4px}
+  .em{
+    width:26px; height:26px; border-radius:8px; display:grid; place-items:center;
+    font-size:13px; margin-left:-6px; box-shadow:0 0 0 2px #fff;
+  }
+
+  /* ── 리스트 행 ── */
+  .row{display:flex; gap:12px; padding:9px 16px; align-items:center; cursor:pointer}
+  .row:active{background:#FAFAFB}
+  .av{
+    width:44px; height:44px; border-radius:16px; flex:0 0 44px; display:grid; place-items:center;
+    font-size:15px; color:#fff; font-weight:700; overflow:hidden; position:relative;
+  }
+  .av.sm{width:34px; height:34px; border-radius:12px; flex-basis:34px; font-size:12px}
+  .av.grid{display:grid; grid-template-columns:1fr 1fr; gap:1px; background:#fff}
+  .av.grid i{display:block; font-style:normal}
+  .row .body{flex:1; min-width:0}
+  .row .nm{font-size:15px; letter-spacing:-.02em; display:flex; align-items:center; gap:5px}
+  .row .nm em{font-style:normal; color:#A8A8AD; font-size:13px; font-weight:400}
+  .row .msg{font-size:13px; color:var(--sub); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px}
+  .row .meta{text-align:right; flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; gap:4px}
+  .row .tm{font-size:11px; color:#B0B0B5}
+  .badge{
+    background:var(--unread); color:#fff; font-size:11px; font-weight:700; min-width:18px; height:18px;
+    border-radius:999px; padding:0 5px; display:grid; place-items:center;
+  }
+  .pillbtn{
+    background:var(--chip); color:#2A2A2E; font-size:12.5px; padding:6px 12px;
+    border-radius:999px; border:0; cursor:pointer; font-family:inherit;
+  }
+  .pillbtn.solid{background:var(--kakao); color:var(--kakao-ink); font-weight:700}
+  .sec{padding:14px 16px 6px; font-size:12.5px; color:var(--sub); display:flex; align-items:center; gap:6px}
+  .sec b{color:#2A2A2E; font-weight:600; font-size:13px}
+  .sec .more{margin-left:auto; color:#B0B0B5; font-size:12px}
+  .hr{height:1px; background:var(--line); margin:8px 16px}
+  .strip{display:flex; gap:14px; padding:4px 16px 10px; overflow-x:auto}
+  .strip::-webkit-scrollbar{height:0}
+  .strip .one{flex:0 0 auto; width:52px; text-align:center}
+  .strip .one .av{width:52px; height:52px; border-radius:50%; flex-basis:52px; margin-bottom:5px}
+  .strip .one span{font-size:11px; color:#5A5A5F; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .dot{position:absolute; top:0; right:0; width:9px; height:9px; border-radius:50%; background:var(--unread); box-shadow:0 0 0 2px #fff}
+
+  /* ── 대화방 ── */
+  .room{background:var(--room-bg); min-height:100%; padding:14px 12px 8px}
+  .msgrow{display:flex; gap:8px; margin-bottom:10px; align-items:flex-end}
+  .msgrow.mine{justify-content:flex-end}
+  .msgrow .who{font-size:12px; color:#33383D; margin-bottom:4px}
+  .bub{
+    max-width:214px; padding:8px 11px; border-radius:14px; font-size:14px; line-height:1.45;
+    background:#fff; letter-spacing:-.01em;
+  }
+  .mine .bub{background:var(--kakao)}
+  .stamp{font-size:10px; color:#4A5560; display:flex; flex-direction:column; align-items:flex-end; gap:1px}
+  .stamp .rd{color:#5C6873}
+  .composer{
+    display:flex; align-items:center; gap:10px; padding:9px 14px 16px; background:#fff;
+    border-top:1px solid #E4E4E8; flex:0 0 auto;
+  }
+  .composer .ph{
+    flex:1; background:#F4F4F6; border-radius:999px; padding:8px 12px;
+    color:#AFAFB4; font-size:14px;
+  }
+  .composer .ic{color:#8A8A8E; font-size:16px}
+  .roombanner{
+    background:rgba(255,255,255,.92); border-radius:14px; padding:11px 13px; margin-bottom:12px;
+    display:flex; align-items:center; gap:10px;
+  }
+  .roombanner .ic{
+    width:34px; height:34px; border-radius:11px; background:var(--kakao); display:grid;
+    place-items:center; font-size:15px; flex:0 0 34px;
+  }
+  .roombanner .t{flex:1; min-width:0}
+  .roombanner .t b{display:block; font-size:13px}
+  .roombanner .t span{font-size:11.5px; color:var(--sub)}
+
+  /* ── 하단 탭바 ── */
+  .tabbar{
+    display:flex; border-top:1px solid #E7E7EB; background:#fff; flex:0 0 auto;
+    padding:7px 2px 12px;
+  }
+  .tab{
+    flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer;
+    color:#C2C2C7; font-size:9.5px; position:relative;
+  }
+  .tab .g{font-size:19px; line-height:1}
+  .tab[aria-current="true"]{color:#111113}
+  .tab .tb{
+    position:absolute; top:-3px; right:calc(50% - 20px); background:var(--unread); color:#fff;
+    font-size:9.5px; font-weight:700; min-width:16px; height:16px; border-radius:999px;
+    padding:0 4px; display:grid; place-items:center;
+  }
+
+  /* ── 커머스(A) ── */
+  .cgrid{display:grid; grid-template-columns:repeat(4,1fr); gap:12px 6px; padding:12px 14px 6px}
+  .cgrid .c{text-align:center; cursor:pointer}
+  .cgrid .c .ic{
+    width:50px; height:50px; border-radius:16px; margin:0 auto 5px; display:grid; place-items:center;
+    font-size:21px; background:#F5F5F7;
+  }
+  .cgrid .c span{font-size:11px; color:#3A3A3F}
+  .prods{display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:8px 14px 16px}
+  .prod .th{
+    aspect-ratio:1; border-radius:14px; margin-bottom:7px; display:grid; place-items:center;
+    font-size:34px;
+  }
+  .prod .bn{font-size:11.5px; color:var(--sub)}
+  .prod .pn{font-size:13.5px; letter-spacing:-.02em; margin:1px 0 3px}
+  .prod .pr{font-size:13.5px; font-weight:800}
+  .rank{padding:0 16px 8px}
+  .rank .r{display:flex; gap:12px; align-items:center; padding:7px 0}
+  .rank .r .no{font-size:14px; font-weight:800; width:14px; color:#111}
+  .rank .r .th{width:42px; height:42px; border-radius:12px; display:grid; place-items:center; font-size:19px}
+  .rank .r .body{flex:1; min-width:0}
+
+  /* ── 캘린더 ── */
+  .cal{padding:6px 12px 16px}
+  .calhead{display:flex; align-items:center; gap:10px; padding:4px 4px 12px}
+  .calhead b{font-size:19px; letter-spacing:-.03em}
+  .calhead .nav{margin-left:auto; display:flex; gap:14px; color:#8A8A8E; font-size:15px}
+  .dow{display:grid; grid-template-columns:repeat(7,1fr); font-size:11px; color:#A8A8AD; text-align:center; padding-bottom:4px}
+  .dow .sun{color:#E5544B}
+  .days{display:grid; grid-template-columns:repeat(7,1fr); gap:1px 0}
+  .day{min-height:52px; padding:4px 3px 0; cursor:pointer; border-top:1px solid #F4F4F6}
+  .day .n{font-size:12px; color:#4A4A4F; text-align:center; display:block; margin-bottom:3px}
+  .day.sun .n{color:#E5544B}
+  .day.out .n{color:#D6D6DA}
+  .day.today .n{
+    background:#111113; color:#fff; width:20px; height:20px; border-radius:50%;
+    margin:0 auto 3px; display:grid; place-items:center; font-size:11px;
+  }
+  .ev{
+    font-size:9.5px; border-radius:4px; padding:1px 3px; margin-bottom:2px; overflow:hidden;
+    white-space:nowrap; text-overflow:ellipsis; line-height:1.5;
+  }
+  .ev.y{background:#FFF3A8; color:#5A4A00}
+  .ev.b{background:#DCE9F7; color:#2B4A6B}
+  .ev.p{background:#F7DCE9; color:#6B2B4A}
+  .agenda{padding:10px 16px 20px}
+  .agenda .a{display:flex; gap:12px; padding:9px 0; border-bottom:1px solid var(--line)}
+  .agenda .a .tm{font-size:12px; color:var(--sub); flex:0 0 52px}
+  .agenda .a .body{flex:1; min-width:0}
+  .agenda .a .nm{font-size:14px; letter-spacing:-.02em}
+  .agenda .a .sub{font-size:12px; color:var(--sub); margin-top:1px}
+
+  /* ── 피드(C) ── */
+  .feed{padding:8px 14px 20px}
+  .fcard{
+    border:1px solid var(--line); border-radius:16px; padding:13px 14px; margin-bottom:10px;
+    display:flex; gap:11px; align-items:flex-start;
+  }
+  .fcard.warn{border-color:#F3D98A; background:#FFFCF0}
+  .fcard .ic{
+    width:36px; height:36px; border-radius:12px; flex:0 0 36px; display:grid; place-items:center;
+    font-size:16px; background:#F5F5F7;
+  }
+  .fcard .body{flex:1; min-width:0}
+  .fcard .k{font-size:11px; color:var(--sub); margin-bottom:2px}
+  .fcard .nm{font-size:14.5px; letter-spacing:-.02em; line-height:1.4}
+  .fcard .sub{font-size:12.5px; color:var(--sub); margin-top:2px}
+  .fcard .acts{display:flex; gap:6px; margin-top:9px}
+  .daymark{font-size:12px; color:#8A8A8E; padding:12px 2px 6px; font-weight:600}
+  .toggle{display:flex; gap:4px; padding:8px 14px 2px}
+  .toggle button{
+    font:inherit; font-size:12.5px; padding:6px 12px; border-radius:999px; border:0;
+    background:var(--chip); color:#4A4A4F; cursor:pointer;
+  }
+  .toggle button[aria-pressed="true"]{background:#111113; color:#fff}
+
+  /* ── 시트(B) ── */
+  .sheetwrap{position:absolute; inset:0; display:flex; align-items:flex-end; z-index:5}
+  .scrim{position:absolute; inset:0; background:rgba(0,0,0,.42)}
+  .sheet{
+    position:relative; width:100%; background:#fff; border-radius:20px 20px 0 0;
+    padding:8px 0 18px; max-height:80%; overflow-y:auto; box-shadow:0 -8px 30px rgba(0,0,0,.16);
+  }
+  .sheet .grab{width:38px; height:4px; border-radius:999px; background:#DDDDE2; margin:4px auto 12px}
+  .sheet h3{font-size:16px; margin:0 0 2px; padding:0 18px; letter-spacing:-.02em}
+  .sheet .lead{font-size:12.5px; color:var(--sub); padding:0 18px 12px; margin:0}
+  .sheet .close{
+    position:absolute; top:12px; right:14px; border:0; background:transparent; font-size:17px;
+    color:#A8A8AD; cursor:pointer;
+  }
+
+  /* ── 판정용 노트 (설계 대상 아님, 명확히 분리) ── */
+  .notes{flex:0 1 340px; min-width:280px}
+  .notes .lab{
+    display:inline-block; background:#111113; color:#fff; font-size:11px; font-weight:700;
+    padding:3px 9px; border-radius:999px; letter-spacing:.03em; margin-bottom:12px;
+  }
+  .notes h2{font-size:20px; margin:0 0 4px; letter-spacing:-.025em}
+  .notes .one{font-size:13.5px; color:#5A5A5F; margin:0 0 18px}
+  .notes dl{margin:0}
+  .notes dt{font-size:11.5px; color:var(--sub); margin-top:14px}
+  .notes dd{margin:2px 0 0; font-size:13.5px; line-height:1.6}
+  .notes .q{
+    margin-top:22px; padding:12px 14px; background:#fff; border-radius:12px;
+    font-size:13px; line-height:1.6; border:1px solid #E2E2E7;
+  }
+  .notes .q b{display:block; margin-bottom:4px; font-size:12px; color:var(--sub); font-weight:600}
+  .screens{display:flex; flex-wrap:wrap; gap:6px; margin-top:14px}
+  .screens button{
+    font:inherit; font-size:12px; padding:5px 11px; border-radius:8px; border:1px solid #DCDCE1;
+    background:#fff; cursor:pointer; color:#4A4A4F;
+  }
+  .screens button[aria-pressed="true"]{background:#111113; border-color:#111113; color:#fff}
+
+  /* ── 변형 전환 바 (프로토타입 장치임이 드러나야 함) ── */
+  .switcher{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:50;
+    display:flex; align-items:center; gap:4px; background:#111113; color:#fff;
+    border-radius:999px; padding:6px 8px; box-shadow:0 10px 30px rgba(0,0,0,.34);
+  }
+  .switcher button{
+    font:inherit; background:transparent; border:0; color:#fff; cursor:pointer; font-size:16px;
+    width:32px; height:32px; border-radius:50%; display:grid; place-items:center;
+  }
+  .switcher button:hover{background:#2C2C31}
+  .switcher .cur{font-size:13px; padding:0 10px; white-space:nowrap}
+  .switcher .cur b{font-weight:700; margin-right:6px}
+  .switcher .kbd{font-size:11px; color:#8A8A8E; padding-right:6px}
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="screen" id="screen"></div>
+    <div class="tabbar" id="tabbar"></div>
+  </div>
+  <div class="notes" id="notes"></div>
+</div>
+
+<div class="switcher" role="group" aria-label="변형 전환">
+  <button id="prev" aria-label="이전 변형">←</button>
+  <span class="cur" id="cur"></span>
+  <button id="next" aria-label="다음 변형">→</button>
+  <span class="kbd">← →</span>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════
+   스크린샷에서 가져온 데이터. 밀도를 진짜처럼 만들려고 그대로 옮겼다.
+   ══════════════════════════════════════════════════════════════ */
+const C = ['#F6C1B4','#C7D8EA','#D9CBEF','#FBDFA4','#BFE3C9','#F0C7D9','#CFCFD6','#EAD9C0'];
+const hue = s => C[[...s].reduce((a,c)=>a+c.charCodeAt(0),0) % C.length];
+
+const CHATS = [
+  {n:'혜선, 유진, 나연', cnt:4, m:'그래서 우리 내일 만나', t:'오후 3:30', u:3, g:['혜','유','나','+']},
+  {n:'김철수 ☕',        m:'선물 고마워! 잘 마실게',      t:'오후 3:00', u:1},
+  {n:'러닝 함께해요', cnt:34, m:'한강 러닝 멤버분들과 함께해요~', t:'오후 2:00', u:10, g:['러','닝','함','께']},
+  {n:'고양이 집사들', cnt:4,  m:'이 사진 진짜 귀엽네요!',    t:'오후 1:30', u:3, g:['고','양','이','집']},
+  {n:'영어 선생님',            m:'선생님 수요일에 괜찮으세요?', t:'오후 1:00', u:2},
+  {n:'월간 독서 모임', cnt:12, m:'저도 좋아요 그 작가님 책 궁금했어요', t:'오후 12:30', u:2, g:['월','간','독','서']},
+  {n:'동기방', cnt:4,          m:'다들 이번 주말에 시간 돼?',  t:'오후 12:30', g:['동','기','방','+']},
+];
+
+const MSGS = [
+  {who:'홍길동', text:'우리 언제 만나?', t:'오후 6:00'},
+  {mine:true, text:'23일 저녁 어때?'},
+  {mine:true, text:'판교역 4번 출구에서 만나', t:'오후 6:00', read:'수신됨'},
+];
+
+const UPDATED = ['김영수','이철수','카카오','박민수','박영수'];
+const BIRTHDAY = {n:'이영희', when:'오늘', emoji:'🎂'};
+
+const PRODUCTS = [
+  {b:'스타벅스',   n:'아이스 카페 아메리카노 T', p:4500,  e:'☕'},
+  {b:'배스킨라빈스', n:'파인트 아이스크림',      p:9800,  e:'🍨'},
+  {b:'뚜레쥬르',   n:'생일 케이크 1호',        p:32000, e:'🎂'},
+  {b:'BBQ',        n:'황금올리브 치킨',        p:20000, e:'🍗'},
+];
+const CATS = [
+  ['🎂','생일'],['☕','커피'],['🍰','케이크'],['🍗','치킨'],
+  ['💐','꽃'],['🧴','뷰티'],['🎫','상품권'],['🏨','호텔'],
+];
+const EVENTS = [
+  {d:23, t:'오후 6:00', n:'길동이랑 저녁', where:'판교역 4번 출구', c:'y', who:'홍길동'},
+  {d:23, t:'오후 9:00', n:'독서 모임 줌',  where:'월간 독서 모임',  c:'b', who:'12명'},
+  {d:25, t:'오전 7:00', n:'한강 러닝',     where:'뚝섬유원지',     c:'b', who:'34명'},
+  {d:27, t:'종일',      n:'이영희 생일',   where:'선물 아직 안 보냄', c:'p', who:'생일'},
+  {d:30, t:'오후 8:00', n:'영어 수업',     where:'영어 선생님',    c:'y', who:'1:1'},
+];
+const TODAY = 23;
+
+/* ══════════════════════════════════════════════════════════════
+   공통 셸 조각 — 스크린샷 그대로. 변형끼리 공유해도 되는 건
+   Header / 행 렌더러 수준까지. 레이아웃과 탭바는 변형이 각자 정한다.
+   ══════════════════════════════════════════════════════════════ */
+const av = (name, cls='') => {
+  const t = name.replace(/[^가-힣A-Za-z]/g,'').slice(0,1) || '·';
+  return `<div class="av ${cls}" style="background:${hue(name)}"><span>${t}</span></div>`;
+};
+const avGrid = names => `<div class="av grid">${names.map(t =>
+  `<i style="background:${hue(t)}"></i>`).join('')}</div>`;
+
+const banner = () => `
+  <div class="banner">
+    <div class="t"><b>오늘의 카카오가 궁금하다면?</b><span>카카오소식 보러가기</span></div>
+    <div class="ems">
+      <span class="em" style="background:#CBE9CE">🌿</span>
+      <span class="em" style="background:#FFE08A">🎁</span>
+      <span class="em" style="background:#F4A9A0">31</span>
+    </div>
+  </div>`;
+
+const chatRow = c => `
+  <div class="row" data-go="room">
+    ${c.g ? avGrid(c.g) : av(c.n)}
+    <div class="body">
+      <div class="nm">${c.n}${c.cnt ? `<em>${c.cnt}</em>` : ''}</div>
+      <div class="msg">${c.m}</div>
+    </div>
+    <div class="meta">
+      <span class="tm">${c.t}</span>
+      ${c.u ? `<span class="badge">${c.u}</span>` : ''}
+    </div>
+  </div>`;
+
+function chatListScreen(extra = '') {
+  return `
+    <div class="top">
+      <h1>채팅</h1>
+      <div class="icons"><span>🔍</span><span>💬</span><span>⚙️</span></div>
+    </div>
+    <div class="chips">      <span class="chip">전체</span>
+      <span class="chip" aria-pressed="true">안읽음 <span class="n">40</span></span>
+      <span class="chip">친구 <span class="n">20</span></span>
+      <span class="chip">직장</span>
+    </div>
+    ${banner()}
+    ${extra}
+    ${CHATS.map(chatRow).join('')}`;
+}
+
+function roomScreen(topBanner = '') {
+  return `
+    <div class="top">
+      <span class="back" data-go="chats">‹</span>
+      <span class="roomname">홍길동</span>
+      <div class="icons"><span>🔍</span><span>📞</span><span>≡</span></div>
+    </div>
+    <div class="room">
+      ${topBanner}
+      ${MSGS.map((m,i) => m.mine ? `
+        <div class="msgrow mine">
+          <div class="stamp">${m.read ? `<span class="rd">${m.read}</span>` : ''}${m.t ? `<span>${m.t}</span>` : ''}</div>
+          <div class="bub">${m.text}</div>
+        </div>` : `
+        <div class="msgrow">
+          ${av(m.who,'sm')}
+          <div>
+            <div class="who">${m.who}</div>
+            <div class="bub">${m.text}</div>
+          </div>
+          <div class="stamp"><span>${m.t}</span></div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function friendsScreen({ giftBtn = true, birthdayExtra = '' } = {}) {
+  return `
+    <div class="top">
+      ${av('홍길순','sm')}
+      <div class="me"><span class="nm">홍길순</span></div>
+      <div class="icons"><span>🔍</span><span>👤+</span><span>🎁</span><span>⚙️</span></div>
+    </div>
+    <div class="seg"><span aria-pressed="true">친구</span><span>소식</span></div>
+    ${banner()}
+    <div class="sec"><b>업데이트한 친구</b> 12</div>
+    <div class="strip">
+      ${UPDATED.map((n,i) => `<div class="one" style="position:relative">
+        ${av(n)}${i<3?'<span class="dot"></span>':''}<span>${n}</span></div>`).join('')}
+    </div>
+    <div class="hr"></div>
+    <div class="sec"><b>생일인 친구</b> 1</div>
+    <div class="row">
+      ${av(BIRTHDAY.n)}
+      <div class="body"><div class="nm">${BIRTHDAY.n} ${BIRTHDAY.emoji}</div>
+        <div class="msg">${BIRTHDAY.when}</div></div>
+      ${giftBtn ? '<button class="pillbtn" data-sheet="gift">선물하기</button>' : ''}
+    </div>
+    ${birthdayExtra}
+    <div class="row">
+      <div class="av" style="background:#FBDFA4">🐱</div>
+      <div class="body"><div class="msg">친구의 생일을 확인해 보세요.</div></div>
+      <span class="tm">6 ›</span>
+    </div>
+    <div class="hr"></div>
+    <div class="sec"><b>친구</b> 420 <span class="more">가나다순 · 업데이트순</span></div>
+    <div class="row"><div class="av" style="background:#FFE08A">🤝</div>
+      <div class="body"><div class="nm">추천친구</div></div><span class="tm">28 ›</span></div>
+    <div class="row"><div class="av" style="background:#C7D8EA">📢</div>
+      <div class="body"><div class="nm">채널</div></div><span class="tm">46 ›</span></div>
+    <div class="row">${av('박영수')}
+      <div class="body"><div class="nm">박영수</div><div class="msg">오늘도 화이팅</div></div></div>`;
+}
+
+/* 캘린더 월 뷰 — A와 C가 같은 조각을 다른 그릇에 담는다 */
+function monthGrid() {
+  const first = 1, offset = 2, total = 30; // 2026-09-01 은 화요일 → 앞에 일·월 2칸
+  const cells = [];
+  for (let i = 0; i < offset; i++) cells.push({ out:true, n: 31 - offset + i + 1 });
+  for (let d = first; d <= total; d++) cells.push({ n:d, evs: EVENTS.filter(e => e.d === d) });
+  while (cells.length % 7) cells.push({ out:true, n: cells.length % 7 });
+  return `
+    <div class="dow"><span class="sun">일</span><span>월</span><span>화</span><span>수</span>
+      <span>목</span><span>금</span><span>토</span></div>
+    <div class="days">
+      ${cells.map((c,i) => `
+        <div class="day ${c.out?'out':''} ${i%7===0?'sun':''} ${c.n===TODAY&&!c.out?'today':''}">
+          <span class="n">${c.n}</span>
+          ${(c.evs||[]).map(e => `<div class="ev ${e.c}">${e.n}</div>`).join('')}
+        </div>`).join('')}
+    </div>`;
+}
+const agendaList = () => `
+  <div class="agenda">
+    ${EVENTS.map(e => `<div class="a">
+      <span class="tm">9월 ${e.d}일<br>${e.t}</span>
+      <div class="body"><div class="nm">${e.n}</div>
+        <div class="sub">${e.where} · ${e.who}</div></div>
+    </div>`).join('')}
+  </div>`;
+
+/* ══════════════════════════════════════════════════════════════
+   변형 3개. 구조가 다르다: A는 최상위 목적지를 늘리고,
+   B는 목적지를 아예 만들지 않고 관계에 종속시키며,
+   C는 시간축 목적지 하나로 둘을 합친다.
+   ══════════════════════════════════════════════════════════════ */
+const VARIANTS = {
+
+/* ───────────────── A ───────────────── */
+A: {
+  name:'탭 증설',
+  one:'선물과 캘린더를 채팅과 동급인 최상위 탭으로 올린다. 하단 탭 6개.',
+  hierarchy:'기능이 조직 원리. 사용자는 "무엇을 하러 왔는지"로 목적지를 고른다.',
+  pros:'발견성이 가장 높고, 선물 카탈로그와 월 뷰가 각자 화면 전체를 쓰니 나중에 깊이 확장하기 쉽다. 커머스 지표를 독립적으로 볼 수 있다.',
+  cons:'실제 카카오톡은 5탭이 고정이고 캘린더 탭이 없다 — 셸을 뜯는 결정이다. 탭 6개는 터치 타깃이 좁아지고, 메신저인데 커머스가 대화와 동급으로 보인다. 선물이 "누구에게"라는 맥락 없이 시작된다.',
+  q:'선물하기를 친구 없이 먼저 여는 사람이 실제로 많은가? 그렇다면 A, 아니면 A는 과잉이다.',
+  tabs:[
+    ['friends','👤','친구'], ['chats','💬','채팅',40], ['gifts','🎁','선물'],
+    ['calendar','📅','캘린더'], ['shop','🛍','쇼핑'], ['more','⋯','더보기'],
+  ],
+  screens:{
+    chats:  () => chatListScreen(),
+    room:   () => roomScreen(),
+    friends:() => friendsScreen({ giftBtn:true }),
+    gifts:  () => `
+      <div class="top"><h1>선물하기</h1>
+        <div class="icons"><span>🔍</span><span>🧾</span><span>⚙️</span></div></div>
+      <div class="chips">
+        <span class="chip" aria-pressed="true">추천</span><span class="chip">생일</span>
+        <span class="chip">랭킹</span><span class="chip">브랜드</span><span class="chip">테마관</span>
+      </div>
+      <div class="cgrid">
+        ${CATS.map(([e,n]) => `<div class="c"><div class="ic">${e}</div><span>${n}</span></div>`).join('')}
+      </div>
+      <div class="hr"></div>
+      <div class="sec"><b>오늘의 선물 랭킹</b><span class="more">더보기 ›</span></div>
+      <div class="rank">
+        ${PRODUCTS.map((p,i) => `<div class="r">
+          <span class="no">${i+1}</span>
+          <div class="th" style="background:${hue(p.n)}">${p.e}</div>
+          <div class="body"><div class="bn" style="font-size:11.5px;color:#8A8A8E">${p.b}</div>
+            <div class="pn">${p.n}</div></div>
+          <div class="pr" style="font-size:13px;font-weight:800">${p.p.toLocaleString()}원</div>
+        </div>`).join('')}
+      </div>
+      <div class="hr"></div>
+      <div class="sec"><b>생일이 다가온 친구</b> 6<span class="more">›</span></div>
+      <div class="strip">${UPDATED.map(n => `<div class="one">${av(n)}<span>${n}</span></div>`).join('')}</div>`,
+    calendar:() => `
+      <div class="top"><h1>캘린더</h1>
+        <div class="icons"><span>🔍</span><span>＋</span><span>⚙️</span></div></div>
+      <div class="cal">
+        <div class="calhead"><b>2026년 9월</b><div class="nav"><span>‹</span><span>오늘</span><span>›</span></div></div>
+        ${monthGrid()}
+      </div>
+      <div class="hr"></div>
+      <div class="sec"><b>다가오는 일정</b> 5<span class="more">›</span></div>
+      ${agendaList()}`,
+    shop:   () => `<div class="top"><h1>쇼핑</h1></div>
+      <div style="padding:60px 20px;text-align:center;color:#B0B0B5;font-size:13px">프로토타입 범위 밖</div>`,
+    more:   () => `<div class="top"><h1>더보기</h1></div>
+      <div style="padding:60px 20px;text-align:center;color:#B0B0B5;font-size:13px">프로토타입 범위 밖</div>`,
+  },
+},
+
+/* ───────────────── B ───────────────── */
+B: {
+  name:'관계에서 파생 · 새 목적지 없음',
+  one:'탭 5개를 그대로 둔다. 선물과 일정은 화면이 아니라 사람과 대화에 붙는 시트로만 존재한다.',
+  hierarchy:'관계가 조직 원리. 먼저 누구인지 고르고, 그 사람에게 할 수 있는 일이 뒤따른다.',
+  pros:'실제 카카오톡 셸을 하나도 안 뜯는다. 진입이 항상 맥락을 갖고 있어서 "누구에게"가 비어 있는 순간이 없다. 만들 화면 수가 가장 적어 셋 중 가장 빨리 완성된다.',
+  cons:'그냥 구경하려는 선물 브라우징이 갈 곳이 없다 — 카탈로그가 시트 안에 갇혀 답답하다. 내 일정 전체를 한눈에 볼 방법이 없어서 캘린더라기보다 "약속 잡기 도구"가 된다. 받은 선물함·교환권 목록도 숨을 곳이 애매하다.',
+  q:'캘린더를 "내 일정 전체 보기" 없이 약속 조율 도구로만 두는 게 받아들여지는가? 그게 안 되면 B는 캘린더 쪽에서 깨진다.',
+  tabs:[
+    ['friends','👤','친구'], ['chats','💬','채팅',40], ['open','💭','오픈채팅'],
+    ['shop','🛍','쇼핑'], ['more','⋯','더보기'],
+  ],
+  screens:{
+    chats:  () => chatListScreen(),
+    room:   () => roomScreen(`
+      <div class="roombanner" data-sheet="promise">
+        <div class="ic">📅</div>
+        <div class="t"><b>23일 저녁 약속으로 잡을까요?</b>
+          <span>대화에서 날짜를 찾았어요 · 판교역 4번 출구</span></div>
+        <span style="color:#B0B0B5">›</span>
+      </div>`),
+    friends:() => friendsScreen({
+      giftBtn:true,
+      birthdayExtra:`
+        <div class="row" style="padding-top:2px">
+          <div style="flex:0 0 44px"></div>
+          <div class="body"><div class="msg" style="color:#8A8A8E">
+            케이크·커피처럼 지난번에 보낸 것들부터 보여줍니다</div></div>
+          <button class="pillbtn solid" data-sheet="gift">바로 고르기</button>
+        </div>`,
+    }),
+    open:   () => `<div class="top"><h1>오픈채팅</h1></div>
+      <div style="padding:60px 20px;text-align:center;color:#B0B0B5;font-size:13px">프로토타입 범위 밖</div>`,
+    shop:   () => `<div class="top"><h1>쇼핑</h1></div>
+      <div style="padding:60px 20px;text-align:center;color:#B0B0B5;font-size:13px">프로토타입 범위 밖</div>`,
+    more:   () => `<div class="top"><h1>더보기</h1></div>
+      <div class="sec"><b>내 선물</b></div>
+      <div class="row"><div class="av" style="background:#FFE08A">🎁</div>
+        <div class="body"><div class="nm">받은 선물함</div>
+        <div class="msg">교환권 2장 · 1장은 12일 뒤 만료</div></div><span class="tm">›</span></div>
+      <div class="row"><div class="av" style="background:#C7D8EA">📤</div>
+        <div class="body"><div class="nm">보낸 선물</div></div><span class="tm">›</span></div>
+      <div class="hr"></div>
+      <div class="sec"><b>일정</b></div>
+      <div class="row"><div class="av" style="background:#F0C7D9">📅</div>
+        <div class="body"><div class="nm">약속 목록</div>
+        <div class="msg">대화에서 잡은 약속 5개</div></div><span class="tm">›</span></div>
+      <div style="padding:16px;color:#B0B0B5;font-size:12px;line-height:1.6">
+        B에서는 이 둘이 최상위가 아니라 더보기 안쪽에 산다. 이게 견딜 만한지가 판정 포인트.</div>`,
+  },
+  sheets:{
+    gift:() => `
+      <h3>이영희 님에게 선물하기</h3>
+      <p class="lead">오늘 생일 · 작년에는 케이크를 보냈어요</p>
+      <div class="cgrid" style="grid-template-columns:repeat(4,1fr);padding:4px 18px 8px">
+        ${CATS.slice(0,4).map(([e,n]) => `<div class="c"><div class="ic">${e}</div><span>${n}</span></div>`).join('')}
+      </div>
+      <div class="prods" style="padding:4px 18px 8px">
+        ${PRODUCTS.slice(0,2).map(p => `<div class="prod">
+          <div class="th" style="background:${hue(p.n)}">${p.e}</div>
+          <div class="bn">${p.b}</div><div class="pn">${p.n}</div>
+          <div class="pr">${p.p.toLocaleString()}원</div></div>`).join('')}
+      </div>
+      <div style="padding:4px 18px 0"><button class="pillbtn solid" style="width:100%;padding:12px">
+        카드 메시지 쓰고 결제하기</button></div>`,
+    promise:() => `
+      <h3>약속으로 저장할까요?</h3>
+      <p class="lead">홍길동 님과의 대화에서 찾았어요</p>
+      <div class="agenda" style="padding:0 18px">
+        <div class="a"><span class="tm">9월 23일</span>
+          <div class="body"><div class="nm">길동이랑 저녁</div>
+            <div class="sub">오후 6:00 · 판교역 4번 출구</div></div></div>
+        <div class="a"><span class="tm">참석</span>
+          <div class="body"><div class="nm">나, 홍길동</div>
+            <div class="sub">저장하면 대화방에 일정 카드가 올라갑니다</div></div></div>
+      </div>
+      <div style="padding:12px 18px 0;display:flex;gap:8px">
+        <button class="pillbtn" style="flex:1;padding:12px">시간 고치기</button>
+        <button class="pillbtn solid" style="flex:1;padding:12px">약속으로 저장</button>
+      </div>`,
+  },
+},
+
+/* ───────────────── C ───────────────── */
+C: {
+  name:'통합 타임라인',
+  one:'3번째 탭을 "소식·일정" 하나로 만들고, 일정·생일·받은 선물·만료 임박 교환권을 한 시간축에 섞는다.',
+  hierarchy:'시간이 조직 원리. 화면이 답하는 질문은 "지금 내가 챙겨야 할 것은 무엇인가".',
+  pros:'선물과 캘린더가 서로를 먹여준다 — 생일이 다가오면 선물 카드가 뜨고, 교환권 만료가 일정으로 잡힌다. 카카오톡에서 사람들이 실제로 놓치는 두 가지(친구 생일, 안 쓴 교환권)를 구조가 직접 막아준다. 탭은 5개 그대로.',
+  cons:'셋 중 실제 카카오톡에서 가장 멀다. 피드가 쉽게 잡동사니가 되고, "무엇을 보여줄지"를 정하는 규칙이 곧 제품이 되어버려 난이도가 가장 높다. 여기도 카탈로그 브라우징은 약하다.',
+  q:'이 피드에 무엇을 넣지 않을지 정할 수 있는가? 넣을 것만 정하면 두 달 뒤 알림 쓰레기통이 된다.',
+  tabs:[
+    ['friends','👤','친구'], ['chats','💬','채팅',40], ['feed','🗓','소식·일정',3],
+    ['shop','🛍','쇼핑'], ['more','⋯','더보기'],
+  ],
+  screens:{
+    chats:  () => chatListScreen(),
+    room:   () => roomScreen(),
+    friends:() => friendsScreen({ giftBtn:true }),
+    feed:   (sub) => {
+      const month = sub === 'month';
+      return `
+      <div class="top"><h1>소식 · 일정</h1>
+        <div class="icons"><span>🔍</span><span>＋</span><span>⚙️</span></div></div>
+      <div class="toggle">
+        <button data-sub="list"  aria-pressed="${!month}">타임라인</button>
+        <button data-sub="month" aria-pressed="${month}">월 보기</button>
+      </div>
+      ${month ? `
+        <div class="cal">
+          <div class="calhead"><b>2026년 9월</b>
+            <div class="nav"><span>‹</span><span>오늘</span><span>›</span></div></div>
+          ${monthGrid()}
+        </div>
+        <div class="hr"></div>
+        <div class="sec"><b>다가오는 일정</b> 5</div>
+        ${agendaList()}` : `
+        <div class="feed">
+          <div class="fcard warn">
+            <div class="ic" style="background:#FFE08A">🎫</div>
+            <div class="body"><div class="k">12일 뒤 만료</div>
+              <div class="nm">김철수가 보낸 아이스 아메리카노</div>
+              <div class="sub">쓰지 않으면 김철수에게 90%만 돌아갑니다</div>
+              <div class="acts"><button class="pillbtn solid">교환권 열기</button>
+                <button class="pillbtn">유효기간 연장</button></div></div>
+          </div>
+          <div class="daymark">오늘 · 9월 23일</div>
+          <div class="fcard">
+            <div class="ic" style="background:#F0C7D9">🎂</div>
+            <div class="body"><div class="k">생일</div>
+              <div class="nm">이영희 님 생일이에요</div>
+              <div class="sub">작년에는 케이크를 보냈어요</div>
+              <div class="acts"><button class="pillbtn solid" data-sheet="gift">선물 고르기</button>
+                <button class="pillbtn">축하 메시지</button></div></div>
+          </div>
+          <div class="fcard">
+            <div class="ic" style="background:#FFF3A8">🍽</div>
+            <div class="body"><div class="k">오후 6:00 · 홍길동</div>
+              <div class="nm">길동이랑 저녁</div>
+              <div class="sub">판교역 4번 출구 · 대화에서 잡은 약속</div>
+              <div class="acts"><button class="pillbtn">대화 열기</button>
+                <button class="pillbtn">길 안내</button></div></div>
+          </div>
+          <div class="fcard">
+            <div class="ic" style="background:#DCE9F7">📖</div>
+            <div class="body"><div class="k">오후 9:00 · 월간 독서 모임</div>
+              <div class="nm">독서 모임 줌</div>
+              <div class="sub">12명 참석 · 참석 응답 8명</div></div>
+          </div>
+          <div class="daymark">모레 · 9월 25일</div>
+          <div class="fcard">
+            <div class="ic" style="background:#BFE3C9">🏃</div>
+            <div class="body"><div class="k">오전 7:00 · 러닝 함께해요</div>
+              <div class="nm">한강 러닝</div>
+              <div class="sub">뚝섬유원지 · 34명</div></div>
+          </div>
+        </div>`}`;
+    },
+    shop:   () => `<div class="top"><h1>쇼핑</h1></div>
+      <div style="padding:60px 20px;text-align:center;color:#B0B0B5;font-size:13px">프로토타입 범위 밖</div>`,
+    more:   () => `<div class="top"><h1>더보기</h1></div>
+      <div style="padding:60px 20px;text-align:center;color:#B0B0B5;font-size:13px">프로토타입 범위 밖</div>`,
+  },
+  sheets:{
+    gift:() => `
+      <h3>이영희 님에게 선물하기</h3>
+      <p class="lead">타임라인의 생일 카드에서 바로 열렸습니다</p>
+      <div class="prods" style="padding:4px 18px 8px">
+        ${PRODUCTS.slice(0,2).map(p => `<div class="prod">
+          <div class="th" style="background:${hue(p.n)}">${p.e}</div>
+          <div class="bn">${p.b}</div><div class="pn">${p.n}</div>
+          <div class="pr">${p.p.toLocaleString()}원</div></div>`).join('')}
+      </div>
+      <div style="padding:4px 18px 0"><button class="pillbtn solid" style="width:100%;padding:12px">
+        카드 메시지 쓰고 결제하기</button></div>`,
+  },
+},
+};
+
+const KEYS = Object.keys(VARIANTS);
+
+/* ══════════════════ 라우팅 + 렌더 (전부 버릴 껍데기) ══════════════════ */
+let url;
+try { url = new URLSearchParams(location.search); } catch (_) { url = new URLSearchParams(''); }
+let vkey  = KEYS.includes(url.get('variant')) ? url.get('variant') : 'A';
+let scr   = url.get('screen') || 'chats';
+let sub   = 'list';
+let sheet = null;
+
+const $ = id => document.getElementById(id);
+
+// 아티팩트 뷰어처럼 샌드박스된 iframe 안에서는 replaceState 가 거부될 수 있다.
+// URL 공유는 부가 기능이므로, 실패해도 변형 전환 자체는 계속 동작해야 한다.
+function syncUrl() {
+  try {
+    history.replaceState(null, '', `?${new URLSearchParams({ variant: vkey, screen: scr })}`);
+  } catch (_) { /* iframe 안에서는 무시 */ }
+}
+
+function setVariant(k) {
+  vkey = k; sheet = null; sub = 'list';
+  if (!VARIANTS[k].screens[scr]) scr = 'chats';
+  syncUrl();
+  render();
+}
+function go(s) {
+  scr = s; sheet = null;
+  syncUrl();
+  render();
+}
+
+function render() {
+  const V = VARIANTS[vkey];
+
+  $('screen').innerHTML = (V.screens[scr] || V.screens.chats)(sub)
+    + (sheet && V.sheets && V.sheets[sheet] ? `
+      <div class="sheetwrap">
+        <div class="scrim" data-close="1"></div>
+        <div class="sheet"><div class="grab"></div>
+          <button class="close" data-close="1">✕</button>
+          ${V.sheets[sheet]()}</div>
+      </div>` : '');
+
+  // 실제 카카오톡은 대화방에서 탭바가 사라지고 입력창이 그 자리를 차지한다.
+  // 이걸 안 지키면 "진입점이 탭에 있는가"라는 판정 자체가 왜곡된다.
+  if (scr === 'room') {
+    $('tabbar').outerHTML = `<div class="composer" id="tabbar">
+      <span class="ic">＋</span>
+      <span class="ph">메시지 입력</span>
+      <span class="ic">☺</span><span class="ic">#</span>
+    </div>`;
+  } else {
+    const bar = $('tabbar');
+    bar.className = 'tabbar';
+    bar.innerHTML = V.tabs.map(([id, g, label, badge]) => `
+      <div class="tab" data-go="${id}" aria-current="${id === scr}">
+        <span class="g">${g}</span>${badge ? `<span class="tb">${badge}</span>` : ''}
+        <span>${label}</span>
+      </div>`).join('');
+  }
+
+  $('notes').innerHTML = `
+    <span class="lab">PROTOTYPE · 변형 ${vkey}</span>
+    <h2>${V.name}</h2>
+    <p class="one">${V.one}</p>
+    <dl>
+      <dt>정보 계층</dt><dd>${V.hierarchy}</dd>
+      <dt>이 구조가 얻는 것</dt><dd>${V.pros}</dd>
+      <dt>이 구조가 잃는 것</dt><dd>${V.cons}</dd>
+    </dl>
+    <div class="q"><b>이 변형을 고르려면 먼저 답해야 하는 것</b>${V.q}</div>
+    <div class="screens">
+      ${Object.keys(V.screens).map(s =>
+        `<button data-go="${s}" aria-pressed="${s === scr}">${s}</button>`).join('')}
+      ${V.screens.room ? `<button data-go="room" aria-pressed="${scr==='room'}">room</button>` : ''}
+    </div>`;
+
+  $('cur').innerHTML = `<b>${vkey}</b>${V.name}`;
+
+  document.querySelectorAll('[data-go]').forEach(el =>
+    el.onclick = e => { e.stopPropagation(); go(el.dataset.go); });
+  document.querySelectorAll('[data-sheet]').forEach(el =>
+    el.onclick = e => { e.stopPropagation(); sheet = el.dataset.sheet; render(); });
+  document.querySelectorAll('[data-close]').forEach(el =>
+    el.onclick = () => { sheet = null; render(); });
+  document.querySelectorAll('[data-sub]').forEach(el =>
+    el.onclick = () => { sub = el.dataset.sub; render(); });
+}
+
+const cycle = d => setVariant(KEYS[(KEYS.indexOf(vkey) + d + KEYS.length) % KEYS.length]);
+$('prev').onclick = () => cycle(-1);
+$('next').onclick = () => cycle(+1);
+addEventListener('keydown', e => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if (e.key === 'ArrowLeft')  cycle(-1);
+  if (e.key === 'ArrowRight') cycle(+1);
+});
+
+setVariant(vkey);
+</script>
+</body>
+</html>

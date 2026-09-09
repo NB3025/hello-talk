@@ -1,0 +1,10 @@
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+# 플랜 파일은 상태 스냅샷을 품은 zip 이다. `*.tfplan` 만으로는 확장자 없는
+# `tfplan` 이 걸러지지 않아 두 형태를 모두 적는다.
+*.tfplan
+tfplan
+tfplan.*
+crash.log

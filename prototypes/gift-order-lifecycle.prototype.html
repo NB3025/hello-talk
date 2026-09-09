@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<!--
+  PROTOTYPE / 버릴 코드 — hello-talk 선물하기 기능의 설계 질문 하나를 답하기 위한 것.
+  질문: "선물 주문 하나가 결제부터 사용·만료·환불까지 가는 동안,
+         어느 상태에서 누가 무엇을 할 수 있고, 돈은 누구에게 돌아가는가?"
+  이 파일의 <script id="model"> 안에 있는 순수 모듈(RULES / check / reduce)만이
+  검증 후 실제 코드로 들어갈 부분이고, 나머지 페이지는 전부 버린다.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>선물하기 주문 생애주기 — 로직 프로토타입</title>
+<style>
+  :root{
+    --bg:#F4F4F6; --card:#FFFFFF; --ink:#191919; --muted:#8A8A8E;
+    --line:#E6E6EA; --accent:#FEE500; --accent-ink:#3C1E1E;
+    --ok:#1B7F4B; --no:#C0392B; --neutral:#4A4A4F;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",
+      "Noto Sans KR",sans-serif;
+    line-height:1.65; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px; margin:0 auto; padding:48px 24px 96px}
+  header.intro{margin-bottom:36px}
+  .badge{
+    display:inline-block; background:var(--accent); color:var(--accent-ink);
+    font-size:12px; font-weight:700; letter-spacing:.04em;
+    padding:4px 10px; border-radius:999px; margin-bottom:16px;
+  }
+  h1{font-size:28px; line-height:1.35; margin:0 0 14px; letter-spacing:-.02em}
+  .intro p{margin:0 0 10px; color:var(--neutral); font-size:15px}
+  .intro .q{
+    border-left:3px solid var(--accent); padding:10px 0 10px 16px;
+    color:var(--ink); font-size:15px; background:transparent;
+  }
+  section{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:24px; margin-bottom:20px;
+  }
+  h2{font-size:15px; margin:0 0 18px; letter-spacing:.01em}
+  h2 .hint{font-weight:400; color:var(--muted); font-size:13px; margin-left:8px}
+
+  /* 현재 상태 */
+  .statusline{
+    display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
+    padding-bottom:16px; margin-bottom:16px; border-bottom:1px solid var(--line);
+  }
+  .statusline .key{font-size:12px; color:var(--muted)}
+  .statusline .val{font-size:20px; font-weight:700; letter-spacing:-.01em}
+  .fields{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px 24px}
+  .f{min-width:0}
+  .f .k{font-size:12px; color:var(--muted); margin-bottom:3px}
+  .f .v{font-size:15px; word-break:break-word}
+  .f .v.dim{color:var(--muted)}
+  .changed{
+    margin-top:18px; padding:12px 14px; border-radius:10px;
+    background:#FFFBE6; border:1px solid #F2E27A; font-size:14px;
+  }
+  .changed.refused{background:#FDECEA; border-color:#F3B7B0}
+  .changed .lab{font-size:12px; color:var(--muted); display:block; margin-bottom:2px}
+
+  /* 원장 */
+  table{width:100%; border-collapse:collapse; font-size:14px; margin-top:4px}
+  th,td{text-align:left; padding:9px 8px; border-bottom:1px solid var(--line)}
+  th{font-size:12px; color:var(--muted); font-weight:600}
+  td.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+  td.plus{color:var(--ok)} td.minus{color:var(--neutral)}
+  .empty{color:var(--muted); font-size:14px; padding:6px 0}
+
+  /* 버튼 */
+  .btns{display:flex; flex-wrap:wrap; gap:8px}
+  button{
+    font:inherit; font-size:14px; cursor:pointer; border-radius:10px;
+    border:1px solid var(--line); background:#fff; color:var(--ink);
+    padding:9px 14px; transition:border-color .12s, background .12s;
+  }
+  button:hover{border-color:#C9C9D0; background:#FAFAFB}
+  button:focus-visible{outline:2px solid var(--accent-ink); outline-offset:2px}
+  button .who{color:var(--muted); font-size:12px; margin-right:6px}
+  button.primary{background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600}
+  button.primary:hover{background:#F2DA00}
+  button:disabled{cursor:default; opacity:.45}
+  button.ghost{background:transparent; color:var(--muted)}
+
+  /* 워크스루 */
+  .tabs{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px}
+  .tabs button{padding:7px 12px; font-size:13px; border-radius:999px}
+  .tabs button[aria-selected="true"]{
+    background:var(--accent-ink); border-color:var(--accent-ink); color:#fff;
+  }
+  .scen .desc{font-size:14px; color:var(--neutral); margin:0 0 6px}
+  .scen .watch{font-size:14px; margin:0 0 18px}
+  .scen .watch b{background:#FFF6BF; padding:0 3px; border-radius:3px; font-weight:600}
+  ol.steps{list-style:none; margin:0; padding:0; counter-reset:s}
+  ol.steps li{
+    counter-increment:s; display:flex; align-items:center; gap:12px;
+    padding:7px 0; border-bottom:1px solid var(--line);
+  }
+  ol.steps li:last-child{border-bottom:0}
+  ol.steps li::before{
+    content:counter(s); flex:0 0 22px; height:22px; border-radius:50%;
+    background:#EFEFF2; color:var(--muted); font-size:12px; font-weight:600;
+    display:grid; place-items:center;
+  }
+  ol.steps li.done::before{background:var(--ok); color:#fff; content:"✓"}
+  ol.steps li.now::before{background:var(--accent); color:var(--accent-ink)}
+  ol.steps li.done .txt{color:var(--muted); text-decoration:line-through}
+  ol.steps li .txt{flex:1; font-size:14px}
+  .finished{margin-top:16px; font-size:14px; color:var(--ok); font-weight:600}
+  footer{color:var(--muted); font-size:13px; text-align:center; margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="intro">
+  <span class="badge">PROTOTYPE · 버릴 코드</span>
+  <h1>선물하기 주문은 어떤 생애를 사는가</h1>
+  <p>hello-talk 의 선물하기 기능을 만들기 전에, 화면이 아니라 <b>규칙</b>을 먼저 만져보기 위한 데모입니다.
+     설치할 것도 없고 저장되는 것도 없습니다. 새로 고치면 처음 상태로 돌아갑니다.</p>
+  <p class="q">답하려는 질문 — 선물 주문 하나가 결제부터 사용·만료·환불까지 가는 동안,
+     <b>어느 상태에서 누가 무엇을 할 수 있고, 돈은 누구에게 돌아가는가?</b>
+     특히 "받는 사람이 이미 받은 선물"을 보낸 사람이 취소할 수 있는지, 만료된 선물의 돈은
+     보낸 사람과 받는 사람 중 누구 것인지가 종이 위에서는 잘 안 잡힙니다.</p>
+</header>
+
+<section>
+  <h2>지금 이 선물의 상태</h2>
+  <div class="statusline">
+    <span class="key">상태</span>
+    <span class="val" id="statusVal">—</span>
+  </div>
+  <div class="fields" id="fields"></div>
+  <div id="changed"></div>
+</section>
+
+<section>
+  <h2>정산 원장 <span class="hint">돈이 실제로 어느 쪽으로 움직였는지</span></h2>
+  <div id="ledger"></div>
+</section>
+
+<section>
+  <h2>자유롭게 눌러보기 <span class="hint">순서 상관없이. 지금 불가능한 동작은 이유를 알려줍니다</span></h2>
+  <div class="btns" id="freeplay"></div>
+  <div class="btns" style="margin-top:14px">
+    <button class="ghost" id="resetBtn">처음 상태로 되돌리기</button>
+  </div>
+</section>
+
+<section>
+  <h2>가이드 시나리오 <span class="hint">탭을 누르면 처음 상태에서 다시 시작합니다</span></h2>
+  <div class="tabs" id="tabs" role="tablist"></div>
+  <div class="scen" id="scen"></div>
+</section>
+
+<footer>이 데모가 답을 주면, 아래 script 안의 순수 모듈만 실제 코드로 옮기고 이 페이지는 버립니다.</footer>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     여기부터가 프로토타입의 본체. DOM 을 전혀 모르는 순수 모듈이라
+     검증이 끝나면 그대로 들어낼 수 있다.
+     ══════════════════════════════════════════════════════════════════════ -->
+<script id="model">
+const RULES = {
+  VOUCHER_DAYS:      90,    // 수락 시 발급되는 교환권 유효기간
+  EXTENSION_DAYS:    90,    // 한 번 연장할 때 늘어나는 기간
+  MAX_EXTENSIONS:    1,     // 연장 가능 횟수
+  EXPIRED_REFUND_RATE: 0.9, // 만료 후 환불 비율 (10% 는 수수료로 남는다)
+  FULL_REFUND_RATE:  1.0,
+};
+
+const SENDER   = '홍길동';
+const RECEIVER = '김철수';
+const PRODUCT  = { name: '카페 아메리카노 T', price: 4500 };
+
+// 상태 6개. cancelled 를 따로 두지 않는다 — 취소는 곧 환불이고,
+// 다른 점은 "누가 시작했는지"라는 사유뿐이기 때문.
+const STATUS = {
+  draft:    '작성 중 · 결제 전',
+  paid:     '결제 완료 · 받는 사람 응답 대기',
+  accepted: '받음 · 교환권 발급',
+  used:     '사용 완료',
+  expired:  '유효기간 만료',
+  refunded: '환불 완료',
+};
+
+const ACTIONS = [
+  { type:'PAY',                 actor:'보낸 사람', label:'결제한다' },
+  { type:'ACCEPT',              actor:'받는 사람', label:'선물을 받는다' },
+  { type:'DECLINE',             actor:'받는 사람', label:'선물을 거절한다' },
+  { type:'CANCEL_BY_SENDER',    actor:'보낸 사람', label:'보낸 선물을 취소한다' },
+  { type:'CANCEL_BY_RECEIVER',  actor:'받는 사람', label:'받은 선물을 취소한다' },
+  { type:'USE',                 actor:'받는 사람', label:'매장에서 교환권을 쓴다' },
+  { type:'EXTEND',              actor:'받는 사람', label:'유효기간을 90일 연장한다' },
+  { type:'REFUND_EXPIRED',      actor:'보낸 사람', label:'만료된 선물을 환불받는다' },
+  { type:'ADVANCE_30',          actor:'시간',      label:'30일이 흐른다' },
+];
+const actionOf = t => ACTIONS.find(a => a.type === t);
+
+function initialState() {
+  return {
+    status: 'draft',
+    product: { ...PRODUCT },
+    sender: SENDER,
+    receiver: RECEIVER,
+    cardMessage: '생일 축하해! 커피 한 잔 해',
+    voucher: null,               // { daysLeft, extensionsUsed }
+    ledger: [],                  // { label, party, amount, note }
+    closedBy: null,              // 종료 사유
+    daysElapsed: 0,
+    lastChange: null,            // { kind:'applied'|'refused', text }
+  };
+}
+
+/**
+ * 이 동작이 지금 가능한가. 가능하면 null, 불가능하면 사람이 읽을 거절 이유.
+ * "어떤 동작이 애초에 합법인가"가 이 프로토타입의 질문 절반이라
+ * reduce 와 분리해 밖에서도 물어볼 수 있게 둔다.
+ */
+function check(s, type) {
+  const st = s.status;
+  switch (type) {
+    case 'PAY':
+      return st === 'draft' ? null : '이미 결제된 선물입니다.';
+
+    case 'ACCEPT':
+    case 'DECLINE':
+      if (st === 'draft') return '아직 결제되지 않아 받는 사람에게 전달되지 않았습니다.';
+      return st === 'paid' ? null : '이미 응답이 끝난 선물입니다.';
+
+    case 'CANCEL_BY_SENDER':
+      if (st === 'draft') return '결제 전에는 취소할 것이 없습니다.';
+      if (st === 'accepted')
+        return '받는 사람이 이미 받았습니다. 이 선물은 받는 사람 것이라 보낸 사람이 되돌릴 수 없습니다.';
+      if (st === 'used')     return '이미 사용된 선물은 취소할 수 없습니다.';
+      if (st === 'expired')  return '만료된 선물은 취소가 아니라 환불 대상입니다.';
+      if (st === 'refunded') return '이미 종료된 선물입니다.';
+      return null; // paid
+
+    case 'CANCEL_BY_RECEIVER':
+      if (st !== 'accepted') return '받은 상태의 선물만 취소할 수 있습니다.';
+      return null;
+
+    case 'USE':
+      if (st === 'accepted') return null;
+      if (st === 'expired')  return '유효기간이 지난 교환권은 쓸 수 없습니다.';
+      return '아직 교환권이 발급되지 않았습니다.';
+
+    case 'EXTEND':
+      if (st === 'expired')
+        return '이미 만료된 교환권은 연장할 수 없습니다. 남은 길은 환불뿐입니다.';
+      if (st !== 'accepted') return '교환권이 없습니다.';
+      if (s.voucher.extensionsUsed >= RULES.MAX_EXTENSIONS)
+        return `연장은 ${RULES.MAX_EXTENSIONS}번까지만 가능합니다.`;
+      return null;
+
+    case 'REFUND_EXPIRED':
+      if (st !== 'expired') return '만료된 선물만 이 방식으로 환불됩니다.';
+      return null;
+
+    case 'ADVANCE_30':
+      return null; // 시간은 언제나 흐른다
+
+    default:
+      return '알 수 없는 동작입니다.';
+  }
+}
+
+function reduce(s, type) {
+  const refusal = check(s, type);
+  if (refusal) return { ...s, lastChange: { kind:'refused', text: refusal } };
+
+  const n = {
+    ...s,
+    product: { ...s.product },
+    voucher: s.voucher ? { ...s.voucher } : null,
+    ledger: [...s.ledger],
+  };
+  const price = n.product.price;
+
+  const settle = (rate, label, note) => {
+    const amount = Math.round(price * rate);
+    n.ledger.push({ label, party: `보낸 사람 ${n.sender}`, amount: +amount, note });
+    n.status = 'refunded';
+    n.voucher = null;
+    return amount;
+  };
+
+  switch (type) {
+    case 'PAY':
+      n.status = 'paid';
+      n.ledger.push({
+        label:'결제', party:`보낸 사람 ${n.sender}`, amount: -price, note:'카드 결제',
+      });
+      n.lastChange = { kind:'applied',
+        text:`${n.sender} 가 ${price.toLocaleString()}원을 결제했습니다. 채팅방에 선물 메시지가 전달되고, ${n.receiver} 의 응답을 기다립니다.` };
+      break;
+
+    case 'ACCEPT':
+      n.status = 'accepted';
+      n.voucher = { daysLeft: RULES.VOUCHER_DAYS, extensionsUsed: 0 };
+      n.lastChange = { kind:'applied',
+        text:`${n.receiver} 가 선물을 받았습니다. 유효기간 ${RULES.VOUCHER_DAYS}일 교환권이 발급되고, 이 선물의 주인이 ${n.receiver} 로 넘어갑니다.` };
+      break;
+
+    case 'DECLINE': {
+      const amt = settle(RULES.FULL_REFUND_RATE, '환불', '받는 사람 거절 · 전액');
+      n.closedBy = '받는 사람 거절';
+      n.lastChange = { kind:'applied',
+        text:`${n.receiver} 가 거절했습니다. ${amt.toLocaleString()}원이 전액 ${n.sender} 에게 즉시 돌아갑니다.` };
+      break;
+    }
+
+    case 'CANCEL_BY_SENDER': {
+      const amt = settle(RULES.FULL_REFUND_RATE, '환불', '보낸 사람 취소 · 전액');
+      n.closedBy = '보낸 사람 취소';
+      n.lastChange = { kind:'applied',
+        text:`아직 ${n.receiver} 가 받지 않았으므로 취소됩니다. ${amt.toLocaleString()}원 전액이 ${n.sender} 에게 돌아갑니다.` };
+      break;
+    }
+
+    case 'CANCEL_BY_RECEIVER': {
+      const amt = settle(RULES.FULL_REFUND_RATE, '환불', '받는 사람이 받은 선물 취소 · 전액');
+      n.closedBy = '받는 사람 취소';
+      n.lastChange = { kind:'applied',
+        text:`${n.receiver} 가 받은 선물을 취소했습니다. 돈은 ${n.receiver} 가 아니라 결제한 ${n.sender} 에게 ${amt.toLocaleString()}원 돌아갑니다 — 받는 사람은 취소를 결정할 수만 있고, 현금을 가져갈 수는 없습니다.` };
+      break;
+    }
+
+    case 'USE':
+      n.status = 'used';
+      n.closedBy = '매장 사용';
+      n.lastChange = { kind:'applied',
+        text:`${n.receiver} 가 매장에서 교환권을 사용했습니다. 여기서 이 선물의 생애가 끝나고, 이후 환불은 불가능합니다.` };
+      n.voucher = { ...n.voucher, daysLeft: n.voucher.daysLeft };
+      break;
+
+    case 'EXTEND':
+      n.voucher.daysLeft += RULES.EXTENSION_DAYS;
+      n.voucher.extensionsUsed += 1;
+      n.lastChange = { kind:'applied',
+        text:`유효기간이 ${RULES.EXTENSION_DAYS}일 늘어 남은 기간이 ${n.voucher.daysLeft}일이 되었습니다. 연장은 ${n.voucher.extensionsUsed}/${RULES.MAX_EXTENSIONS} 회 사용.` };
+      break;
+
+    case 'REFUND_EXPIRED': {
+      const amt = settle(RULES.EXPIRED_REFUND_RATE, '환불', `만료 환불 ${RULES.EXPIRED_REFUND_RATE * 100}%`);
+      const fee = price - amt;
+      n.closedBy = '만료 후 환불';
+      n.lastChange = { kind:'applied',
+        text:`만료된 선물이 환불됩니다. ${amt.toLocaleString()}원이 ${n.receiver} 가 아니라 결제한 ${n.sender} 에게 돌아가고, ${fee.toLocaleString()}원은 수수료로 남습니다.` };
+      break;
+    }
+
+    case 'ADVANCE_30': {
+      n.daysElapsed += 30;
+      if (n.voucher) {
+        n.voucher.daysLeft -= 30;
+        if (n.voucher.daysLeft <= 0 && n.status === 'accepted') {
+          n.status = 'expired';
+          n.voucher.daysLeft = 0;
+          n.lastChange = { kind:'applied',
+            text:`30일이 더 흘러 교환권이 만료되었습니다. ${n.receiver} 는 이제 쓸 수도 연장할 수도 없고, 환불을 받을 사람은 ${n.sender} 입니다.` };
+          break;
+        }
+      }
+      n.lastChange = { kind:'applied',
+        text:`30일이 흘렀습니다.${n.voucher ? ` 교환권 남은 기간 ${n.voucher.daysLeft}일.` : ''}` };
+      break;
+    }
+  }
+  return n;
+}
+
+// 시나리오 — 종이 위에서 특히 헷갈리는 경우들
+const SCENARIOS = [
+  { id:'happy', title:'정상 흐름',
+    desc:'가장 흔한 경로. 결제하고, 상대가 받고, 매장에서 쓴다.',
+    watch:'교환권이 <b>수락 시점</b>에 발급된다는 점 — 결제 시점이 아니다.',
+    steps:['PAY','ACCEPT','USE'] },
+
+  { id:'decline', title:'상대가 거절',
+    desc:'결제까지 했는데 받는 사람이 거절한다.',
+    watch:'전액이 <b>즉시</b> 보낸 사람에게 돌아가고 수수료가 없다.',
+    steps:['PAY','DECLINE'] },
+
+  { id:'expire', title:'만료된 선물의 돈',
+    desc:'상대가 받아두고 쓰지 않은 채로 90일이 지난다.',
+    watch:'환불금이 선물을 <b>받은 사람이 아니라 결제한 사람</b>에게 간다. 그리고 10%가 수수료로 사라진다.',
+    steps:['PAY','ACCEPT','ADVANCE_30','ADVANCE_30','ADVANCE_30','REFUND_EXPIRED'] },
+
+  { id:'extend', title:'유효기간 연장, 그리고 그 한계',
+    desc:'만료가 다가와 한 번 연장하고, 두 번째 연장을 시도한다.',
+    watch:'두 번째 연장이 <b>거부</b>되는 지점. 그 뒤엔 쓰거나 만료되는 길만 남는다.',
+    steps:['PAY','ACCEPT','ADVANCE_30','ADVANCE_30','EXTEND','EXTEND'] },
+
+  { id:'sender-regret', title:'보낸 사람이 마음을 바꾼다',
+    desc:'상대가 받기 전에 취소해보고, 받은 뒤에 또 취소해본다.',
+    watch:'같은 동작이 <b>수락을 경계로</b> 합법에서 불법으로 바뀐다. 소유권이 넘어갔기 때문.',
+    steps:['PAY','CANCEL_BY_SENDER'] },
+
+  { id:'illegal', title:'막혀야 하는 시도들',
+    desc:'상대가 받은 뒤 보낸 사람이 취소, 사용한 뒤 환불, 만료된 뒤 연장을 차례로 시도한다.',
+    watch:'세 번 모두 <b>거절 이유가 서로 다르다</b> — 하나의 "불가" 메시지로 뭉개면 안 된다는 신호.',
+    steps:['PAY','ACCEPT','CANCEL_BY_SENDER','USE','CANCEL_BY_RECEIVER'] },
+];
+</script>
+
+<!-- ── 여기부터는 버리는 껍데기. 위 모듈을 클릭으로 두드리기만 한다. ── -->
+<script>
+let state = initialState();
+let scenIdx = 0;
+let stepIdx = 0;
+let scenActive = false;
+
+const $ = id => document.getElementById(id);
+const won = n => `${n.toLocaleString()}원`;
+
+function dispatch(type) {
+  state = reduce(state, type);
+  render();
+}
+
+function renderState() {
+  $('statusVal').textContent = STATUS[state.status];
+
+  const v = state.voucher;
+  const fields = [
+    ['상품', `${state.product.name} · ${won(state.product.price)}`],
+    ['보낸 사람', state.sender],
+    ['받는 사람', state.receiver],
+    ['카드 메시지', state.cardMessage],
+    ['교환권', v ? `남은 기간 ${v.daysLeft}일 · 연장 ${v.extensionsUsed}/${RULES.MAX_EXTENSIONS}회`
+                 : '아직 발급되지 않음'],
+    ['이 선물의 주인', state.status === 'draft' || state.status === 'paid'
+        ? `${state.sender} (아직 넘어가지 않음)`
+        : state.status === 'refunded' ? '없음 (종료)' : state.receiver],
+    ['흐른 시간', `${state.daysElapsed}일`],
+    ['종료 사유', state.closedBy || '진행 중'],
+  ];
+  $('fields').innerHTML = fields.map(([k, val]) => `
+    <div class="f"><div class="k">${k}</div>
+    <div class="v${val.includes('아직') || val === '진행 중' ? ' dim' : ''}">${val}</div></div>`).join('');
+
+  const c = state.lastChange;
+  $('changed').innerHTML = !c ? '' : `
+    <div class="changed${c.kind === 'refused' ? ' refused' : ''}">
+      <span class="lab">${c.kind === 'refused' ? '이 동작은 지금 불가능합니다' : '방금 무엇이 바뀌었나'}</span>
+      ${c.text}
+    </div>`;
+}
+
+function renderLedger() {
+  if (!state.ledger.length) {
+    $('ledger').innerHTML = '<div class="empty">아직 돈이 움직이지 않았습니다.</div>';
+    return;
+  }
+  const net = state.ledger.reduce((a, r) => a + r.amount, 0);
+  $('ledger').innerHTML = `
+    <table>
+      <thead><tr><th>구분</th><th>대상</th><th>내용</th><th class="num">금액</th></tr></thead>
+      <tbody>
+        ${state.ledger.map(r => `<tr>
+          <td>${r.label}</td><td>${r.party}</td><td>${r.note}</td>
+          <td class="num ${r.amount > 0 ? 'plus' : 'minus'}">${r.amount > 0 ? '+' : ''}${won(r.amount)}</td>
+        </tr>`).join('')}
+        <tr><td colspan="3"><b>${state.sender} 의 최종 손익</b></td>
+        <td class="num ${net >= 0 ? 'plus' : 'minus'}"><b>${net > 0 ? '+' : ''}${won(net)}</b></td></tr>
+      </tbody>
+    </table>`;
+}
+
+function renderFreeplay() {
+  $('freeplay').innerHTML = ACTIONS.map(a => {
+    const ok = check(state, a.type) === null;
+    return `<button data-act="${a.type}" class="${ok ? 'primary' : ''}">
+      <span class="who">${a.actor}</span>${a.label}</button>`;
+  }).join('');
+  $('freeplay').querySelectorAll('button').forEach(b =>
+    b.onclick = () => { scenActive = false; dispatch(b.dataset.act); });
+}
+
+function renderTabs() {
+  $('tabs').innerHTML = SCENARIOS.map((s, i) =>
+    `<button role="tab" aria-selected="${scenActive && i === scenIdx}" data-i="${i}">${s.title}</button>`
+  ).join('');
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => {
+    scenIdx = +b.dataset.i; stepIdx = 0; scenActive = true;
+    state = initialState();
+    render();
+  });
+}
+
+function renderScenario() {
+  const s = SCENARIOS[scenIdx];
+  const done = scenActive && stepIdx >= s.steps.length;
+  $('scen').innerHTML = `
+    <p class="desc">${s.desc}</p>
+    <p class="watch">눈여겨볼 것 — ${s.watch}</p>
+    <ol class="steps">
+      ${s.steps.map((t, i) => {
+        const a = actionOf(t);
+        const cls = !scenActive ? '' : i < stepIdx ? 'done' : i === stepIdx ? 'now' : '';
+        const live = scenActive && i === stepIdx;
+        return `<li class="${cls}">
+          <span class="txt"><span class="who" style="color:#8A8A8E;font-size:12px">${a.actor}</span> ${a.label}</span>
+          <button data-step="${i}" ${live ? 'class="primary"' : 'disabled'}>
+            ${live ? '이 단계 실행' : i < stepIdx && scenActive ? '완료' : '대기'}
+          </button></li>`;
+      }).join('')}
+    </ol>
+    ${!scenActive ? '<div class="finished" style="color:#8A8A8E;font-weight:400">위 탭을 눌러 시나리오를 시작하세요. 시작하면 처음 상태로 초기화됩니다.</div>' : ''}
+    ${done ? '<div class="finished">시나리오 끝. 위의 상태와 원장이 예상과 같은지 확인해 보세요.</div>' : ''}`;
+
+  $('scen').querySelectorAll('button[data-step]').forEach(b => b.onclick = () => {
+    dispatchStep(+b.dataset.step);
+  });
+}
+
+function dispatchStep(i) {
+  const s = SCENARIOS[scenIdx];
+  stepIdx = i + 1;
+  dispatch(s.steps[i]);
+}
+
+function render() { renderState(); renderLedger(); renderFreeplay(); renderTabs(); renderScenario(); }
+
+$('resetBtn').onclick = () => { state = initialState(); scenActive = false; stepIdx = 0; render(); };
+render();
+</script>
+</body>
+</html>
