@@ -12,6 +12,8 @@ const start = async (): Promise<void> => {
     pool,
     cookieSecret: config.cookieSecret,
     devTools: config.devTools,
+    clientOrigins: config.clientOrigins,
+    cookieSecure: config.cookieSecure,
   });
 
   try {

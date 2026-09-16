@@ -33,6 +33,20 @@ export const startTestApp = async (): Promise<TestContext> => {
   return { app, pool };
 };
 
+/**
+ * 운영 유사 앱(devTools:false, cookieSecure:true, 크로스 오리진 CLIENT_ORIGIN 지정).
+ * 기존 DB 는 그대로 쓰되(마이그레이션 재실행 안전) 앱만 다른 설정으로 세운다.
+ * 기존 테스트 DB pool 을 재사용하도록 pool 을 인자로 받는다.
+ */
+export const buildProdLikeApp = (pool: Pool, clientOrigin = 'https://app.example.com'): FastifyInstance =>
+  buildApp({
+    pool,
+    cookieSecret: COOKIE_SECRET,
+    devTools: false,
+    clientOrigins: [clientOrigin],
+    cookieSecure: true,
+  });
+
 export const stopTestApp = async (ctx: TestContext): Promise<void> => {
   await ctx.app.close();
   await ctx.pool.end();

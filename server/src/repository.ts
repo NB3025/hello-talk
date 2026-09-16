@@ -92,6 +92,77 @@ export class ServerRepository {
     return r.rows[0] ? toUser(r.rows[0]) : undefined;
   }
 
+  /** 모든 사용자(데모 로그인 화면의 사용자 디렉터리 전용). dev 에서만 노출한다. */
+  async allUsers(): Promise<User[]> {
+    const r = await this.pool.query('SELECT * FROM users ORDER BY created_at');
+    return r.rows.map(toUser);
+  }
+
+  /**
+   * 행위자 자신의 세계로 좁힌 스냅샷. 프런트엔드 미러가 그대로 하이드레이트한다.
+   * 포함 범위:
+   *  - 방: 행위자가 멤버인 방들.
+   *  - 메시지·읽음: 그 방들의 것.
+   *  - 친구관계: 행위자가 owner 이거나 friend 인 행(단방향 표시를 상대도 볼 수 있어야 하므로 양쪽).
+   *  - 선물: 행위자가 sender 이거나 receiver 인 주문.
+   *  - 사용자: 행위자 본인 + 위에서 등장한 모든 상대(친구/대화 상대/선물 당사자).
+   * 남의 방·메시지·선물 원장은 절대 포함되지 않는다.
+   */
+  async scopedSnapshot(actorId: UserId, client?: PoolClient): Promise<Db> {
+    const q = client ?? this.pool;
+    const db = emptyDb();
+
+    const [chats, friendships, gifts] = await Promise.all([
+      q.query(
+        `SELECT c.*, COALESCE(
+           (SELECT array_agg(cm2.user_id) FROM chat_members cm2 WHERE cm2.chat_id = c.id),
+           ARRAY[]::text[]
+         ) AS member_ids
+         FROM chats c
+         WHERE EXISTS (SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = $1)`,
+        [actorId],
+      ),
+      q.query(
+        'SELECT * FROM friendships WHERE owner_id = $1 OR friend_id = $1',
+        [actorId],
+      ),
+      q.query(
+        'SELECT * FROM gift_orders WHERE sender_id = $1 OR receiver_id = $1',
+        [actorId],
+      ),
+    ]);
+
+    db.chats = chats.rows.map(toChat);
+    db.friendships = friendships.rows.map(toFriendship);
+    db.giftOrders = gifts.rows.map(toGiftOrder);
+
+    const chatIds = db.chats.map((c) => c.id);
+    // 빈 배열이어도 ANY(ARRAY[]) 는 아무 행도 매칭하지 않으므로 그대로 질의한다.
+    const [messages, reads] = await Promise.all([
+      q.query('SELECT * FROM messages WHERE chat_id = ANY($1::text[])', [chatIds]),
+      q.query('SELECT * FROM reads WHERE chat_id = ANY($1::text[])', [chatIds]),
+    ]);
+    db.messages = messages.rows.map(toMessage);
+    db.reads = reads.rows.map(toRead);
+
+    // 등장하는 모든 사용자 id 를 모아 본인 것까지 한 번에 읽는다.
+    const userIds = new Set<string>([actorId]);
+    for (const c of db.chats) for (const m of c.memberIds) userIds.add(m);
+    for (const f of db.friendships) {
+      userIds.add(f.ownerId);
+      userIds.add(f.friendId);
+    }
+    for (const o of db.giftOrders) {
+      userIds.add(o.senderId);
+      userIds.add(o.receiverId);
+    }
+    const ids = [...userIds];
+    const users = await q.query('SELECT * FROM users WHERE id = ANY($1::text[]) ORDER BY created_at', [ids]);
+    db.users = users.rows.map(toUser);
+
+    return db;
+  }
+
   // ── 사용자/인증 ────────────────────────────────────────────────────────
 
   /** 새 사용자를 만든다. localRepository.createUser 와 같은 규칙. */
@@ -348,6 +419,17 @@ export class ServerRepository {
   /**
    * 멱등 키가 있으면 저장된 결과를 그대로 돌려준다. 없으면 fn 을 돌리고 결과를 저장한다.
    * 메시지·선물·방 열기 재시도가 중복 생성하지 않게 한다.
+   *
+   * 동시성: 같은 (scope, actor, key) 로 재시도가 겹쳐도 부수효과가 두 번 나면 안 된다.
+   * 그래서 이 (scope, actor, key) 에 대한 트랜잭션 스코프 advisory 락을 먼저 잡는다 —
+   * 락을 잡은 트랜잭션이 커밋될 때까지 같은 키의 다른 요청은 여기서 대기한다. 락을 잡은 뒤
+   * 저장된 결과가 이미 있으면 그것을 돌려주고(중복 실행 없음), 없으면 fn 을 실행하고 결과를
+   * 저장한 다음 커밋한다. lookup·실행·저장이 하나의 트랜잭션 안에서 원자적으로 일어난다.
+   *
+   * 주의: fn(mutator) 은 내부에서 자체 트랜잭션을 연다. Postgres 는 같은 커넥션 안에서
+   * 트랜잭션을 중첩하지 않으므로(자식 BEGIN/COMMIT 은 무시/경고), 여기서 잡은 advisory 락은
+   * 이 커넥션(=게이트 트랜잭션)에 매여 있고, fn 의 커밋과 무관하게 게이트가 커밋될 때 풀린다.
+   * 결과 저장까지 마친 뒤 게이트를 커밋하므로, 대기하던 재시도는 저장된 결과를 반드시 본다.
    */
   async withIdempotency<T>(
     scope: string,
@@ -356,26 +438,45 @@ export class ServerRepository {
     fn: () => Promise<Mutation<T>>,
   ): Promise<Mutation<T>> {
     if (!key) return fn();
-    const existing = await this.pool.query(
-      'SELECT result FROM idempotency_keys WHERE scope = $1 AND actor_id = $2 AND key = $3',
-      [scope, actorId, key],
-    );
-    if (existing.rows[0]) {
-      // 재시도: 저장된 결과를 돌려주되 changed=false (중복 브로드캐스트 방지).
-      return { result: existing.rows[0].result as T, changed: false };
-    }
-    const out = await fn();
-    // 성공했을 때만 키를 남긴다. 실패(검증 거절)는 재시도 시 다시 평가받아야 한다.
-    const okResult = out.result as unknown as { ok?: boolean };
-    if (okResult.ok !== false) {
-      await this.pool.query(
-        `INSERT INTO idempotency_keys (scope, actor_id, key, result, created_at)
-         VALUES ($1,$2,$3,$4,$5)
-         ON CONFLICT (scope, actor_id, key) DO NOTHING`,
-        [scope, actorId, key, JSON.stringify(out.result), Date.now()],
+
+    const gate = await this.pool.connect();
+    try {
+      await gate.query('BEGIN');
+      // 이 (scope, actor, key) 에 대한 트랜잭션 스코프 락. 같은 키의 동시 재시도는 직렬화된다.
+      const [k1, k2] = advisoryKey(scope, actorId, key);
+      await gate.query('SELECT pg_advisory_xact_lock($1, $2)', [k1, k2]);
+
+      // 락을 잡은 뒤에 조회한다 — 앞선 요청이 이미 저장했다면 그 결과를 그대로 돌려준다.
+      const existing = await gate.query(
+        'SELECT result FROM idempotency_keys WHERE scope = $1 AND actor_id = $2 AND key = $3',
+        [scope, actorId, key],
       );
+      if (existing.rows[0]) {
+        await gate.query('COMMIT');
+        return { result: existing.rows[0].result as T, changed: false };
+      }
+
+      // 아직 없다 — 이 요청이 실행한다. fn 은 자체 트랜잭션에서 부수효과를 커밋한다.
+      const out = await fn();
+      // 성공했을 때만 키를 남긴다. 실패(검증 거절)는 재시도 시 다시 평가받아야 한다.
+      const okResult = out.result as unknown as { ok?: boolean };
+      if (okResult.ok !== false) {
+        await gate.query(
+          `INSERT INTO idempotency_keys (scope, actor_id, key, result, created_at)
+           VALUES ($1,$2,$3,$4,$5)
+           ON CONFLICT (scope, actor_id, key) DO NOTHING`,
+          [scope, actorId, key, JSON.stringify(out.result), Date.now()],
+        );
+      }
+      // 저장까지 마친 뒤 커밋 → 락 해제. 대기하던 재시도는 저장된 결과를 본다.
+      await gate.query('COMMIT');
+      return out;
+    } catch (err) {
+      await gate.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      gate.release();
     }
-    return out;
   }
 }
 
@@ -423,3 +524,23 @@ const updateGiftOrder = async (c: PoolClient, o: import('../../src/domain/gift')
 
 const formatCode = (normalized: string): string =>
   normalized.startsWith('HT') ? `HT-${normalized.slice(2)}` : normalized;
+
+/** 문자열을 32비트 정수로 해시한다(FNV-1a). advisory 락 키 산출용. */
+const hash32 = (s: string): number => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  // 부호 있는 32비트로 접어 넣는다(pg 의 int4 범위에 맞춘다).
+  return h | 0;
+};
+
+/**
+ * (scope, actor, key) 를 pg_advisory_xact_lock(int4, int4) 인자 두 개로 만든다.
+ * 첫 인자는 scope, 둘째는 actor+key 해시 — 서로 다른 키가 같은 락으로 뭉치는 것을 줄인다.
+ */
+const advisoryKey = (scope: string, actorId: string, key: string): [number, number] => [
+  hash32(`idem:${scope}`),
+  hash32(`${actorId}\u0000${key}`),
+];

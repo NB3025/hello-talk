@@ -72,6 +72,12 @@ export class ApiRepository implements Repository {
   private readonly makeWs: WebSocketFactory | false;
   private ws: WebSocketLike | null = null;
   private disposed = false;
+  /**
+   * 낙관적으로 연 1:1 방의 임시 id → 서버가 확정한 방 id 매핑.
+   * 호출자에게 돌려준 임시 id 는 미러 안에서 안정적으로 유지하고(그 id 로 연 화면이 유령
+   * 방을 가리키지 않게), 서버로 나가는 요청·서버에서 오는 스냅샷은 이 매핑으로 번역한다.
+   */
+  private chatIdAliases = new Map<ChatId, ChatId>();
   /** 겹치는 스냅샷 재요청이 순서 뒤집히지 않도록 직렬화한다. */
   private refreshChain: Promise<void> = Promise.resolve();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -257,7 +263,9 @@ export class ApiRepository implements Repository {
     const existing = directChatBetween(this.db, a, b);
     if (existing) return existing.id;
 
-    // 낙관적으로 방을 만들고 안정된 id 를 돌려준다. 서버 방 id 로 재조정한다.
+    // 낙관적으로 방을 만들고 "안정된" 임시 id 를 돌려준다. 이 id 는 미러 안에서 절대 바뀌지
+    // 않는다 — 이 id 로 연 화면(App 의 openChat 상태)이 유령 방을 가리키는 일을 막는다.
+    // 서버가 확정한 방 id 는 별도 별칭 맵에 담아 두고, 나가는 요청·오는 스냅샷을 번역한다.
     const tempId = newId();
     this.mutate((db) => {
       if (directChatBetween(db, a, b)) return;
@@ -267,17 +275,18 @@ export class ApiRepository implements Repository {
     void this.command('/api/chats/direct', { targetId: b }, undefined, (data) => {
       const serverId = (data as { chatId?: ChatId }).chatId;
       if (!serverId || serverId === tempId) return;
-      // 임시 방을 서버 id 로 바꾼다 — 돌려준 id 로 연 화면이 실재하는 방을 보게 한다.
-      this.mutate((db) => {
-        const temp = db.chats.find((c) => c.id === tempId);
-        if (temp && !db.chats.some((c) => c.id === serverId)) temp.id = serverId;
-        else if (temp) db.chats = db.chats.filter((c) => c.id !== tempId);
-        for (const m of db.messages) if (m.chatId === tempId) m.chatId = serverId;
-        for (const r of db.reads) if (r.chatId === tempId) r.chatId = serverId;
-      });
+      // 임시 id 는 그대로 두고 서버 id 를 별칭으로 기록한다. 이후 스냅샷에 서버 id 로 오는
+      // 같은 방은 replace() 에서 임시 id 로 되접혀 하나로 유지된다.
+      this.chatIdAliases.set(tempId, serverId);
+      void this.refresh();
     });
 
     return directChatBetween(this.db, a, b)?.id ?? tempId;
+  }
+
+  /** 미러의 (임시일 수 있는) 방 id 를 서버가 아는 방 id 로 번역한다. */
+  private toServerChatId(id: ChatId): ChatId {
+    return this.chatIdAliases.get(id) ?? id;
   }
 
   sendMessage(chatId: ChatId, senderId: UserId, text: string): void {
@@ -295,17 +304,17 @@ export class ApiRepository implements Repository {
       upsertRead(db, chatId, senderId, now);
     });
 
-    void this.command(`/api/chats/${encodeURIComponent(chatId)}/messages`, {
-      text: body,
-      clientKey: localId,
-    });
+    void this.command(
+      `/api/chats/${encodeURIComponent(this.toServerChatId(chatId))}/messages`,
+      { text: body, clientKey: localId },
+    );
   }
 
   markRead(chatId: ChatId, userId: UserId): void {
     // 읽을 것이 없으면 아무것도 하지 않는다(무한 루프 방지, LocalRepository 와 동일).
     if (unreadCount(this.db, chatId, userId) === 0) return;
     this.mutate((db) => upsertRead(db, chatId, userId, Date.now()));
-    void this.command(`/api/chats/${encodeURIComponent(chatId)}/read`, {});
+    void this.command(`/api/chats/${encodeURIComponent(this.toServerChatId(chatId))}/read`, {});
   }
 
   // ── 선물 ──────────────────────────────────────────────────────────────
@@ -502,6 +511,17 @@ export class ApiRepository implements Repository {
   }
 
   private replace(next: Db): void {
+    // 서버 스냅샷은 방을 서버 id 로 들고 온다. 낙관적으로 연 방에 임시 id 를 돌려줬다면,
+    // 그 서버 id 를 임시 id 로 되접어 미러를 하나의 안정된 id 로 유지한다(유령 방 방지).
+    if (this.chatIdAliases.size > 0) {
+      const serverToTemp = new Map<ChatId, ChatId>();
+      for (const [temp, server] of this.chatIdAliases) serverToTemp.set(server, temp);
+      const remap = (id: ChatId): ChatId => serverToTemp.get(id) ?? id;
+      for (const c of next.chats) c.id = remap(c.id);
+      for (const m of next.messages) m.chatId = remap(m.chatId);
+      for (const r of next.reads) r.chatId = remap(r.chatId);
+      for (const o of next.giftOrders) o.chatId = remap(o.chatId);
+    }
     this.commit(next);
   }
 

@@ -184,7 +184,7 @@ describe('ApiRepository createUser', () => {
 });
 
 describe('ApiRepository openDirectChat', () => {
-  it('낙관적으로 열 수 있는 방 id 를 돌려주고 서버 id 로 재조정한다', async () => {
+  it('돌려준 방 id 는 재조정 후에도 그대로 실재하는 방을 가리킨다(유령 id 금지)', async () => {
     const backend = new FakeBackend();
     const me = backend.makeUser('나');
     const other = backend.makeUser('상대');
@@ -196,24 +196,28 @@ describe('ApiRepository openDirectChat', () => {
     expect(repo.snapshot().chats.some((c) => c.id === chatId)).toBe(true);
 
     await tick();
-    // 서버 방 id 로 재조정된다.
-    expect(repo.snapshot().chats.some((c) => c.id === `srv-chat-${other.id}`)).toBe(true);
+    // 서버 스냅샷이 서버 방 id 로 와도, 호출자가 들고 있는 id 는 그대로 유효하다:
+    // 서버 id 는 별칭으로 접혀 미러는 안정된 id 하나로 유지된다(App 의 openChat 이
+    // 유령 방을 가리키지 않는다).
+    expect(repo.snapshot().chats.some((c) => c.id === chatId)).toBe(true);
     expect(repo.snapshot().chats).toHaveLength(1);
+    // srv-chat-* 로 중복된 방이 생기지 않는다.
+    expect(repo.snapshot().chats.some((c) => c.id === `srv-chat-${other.id}`)).toBe(false);
     repo.dispose();
   });
 
-  it('이미 있는 방이면 그 id 를 돌려준다', async () => {
+  it('이미 있는 방이면 같은(안정된) id 를 돌려준다', async () => {
     const backend = new FakeBackend();
     const me = backend.makeUser('나');
     const other = backend.makeUser('상대');
     const repo = make(backend, false);
     await tick();
 
-    repo.openDirectChat(me.id, other.id);
-    await tick(); // 서버 id 로 재조정된다.
-    // 재조정 후 다시 열면 재사용된 서버 방 id 를 돌려주고, 방은 하나뿐이다.
+    const first = repo.openDirectChat(me.id, other.id);
+    await tick(); // 서버 id 는 별칭으로 접힌다.
+    // 다시 열면 같은 안정된 id 를 돌려주고, 방은 하나뿐이다.
     const second = repo.openDirectChat(me.id, other.id);
-    expect(second).toBe(`srv-chat-${other.id}`);
+    expect(second).toBe(first);
     expect(repo.snapshot().chats.some((c) => c.id === second)).toBe(true);
     expect(repo.snapshot().chats).toHaveLength(1);
     repo.dispose();

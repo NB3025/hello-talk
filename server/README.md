@@ -94,10 +94,11 @@ npm run e2e        # 위 엔드투엔드 (52 단언)
 | 메서드 | 경로 | 설명 |
 | --- | --- | --- |
 | GET | `/health` | 헬스체크 |
-| POST | `/api/auth/session` | `{name}` 새 사용자 생성 후 로그인 / `{userId}` 기존 사용자로 로그인 |
+| POST | `/api/auth/session` | `{name}` 새 사용자 생성 후 로그인. `{userId}` 기존 사용자로 로그인은 **`DEV_TOOLS` 에서만**(운영은 403) |
 | GET | `/api/auth/me` | 현재 세션 사용자 (없으면 401) |
 | DELETE | `/api/auth/session` | 로그아웃 |
-| GET | `/api/snapshot` | 전역 Db 스냅샷 (프런트 미러 하이드레이트용) |
+| GET | `/api/snapshot` | **행위자 스코핑** Db 스냅샷(본인 세계만: 친구/대화 상대·본인 방·그 방의 메시지·읽음·본인이 당사자인 선물). 프런트 미러 하이드레이트용 |
+| GET | `/api/dev/users` | **`DEV_TOOLS` 전용.** 데모 로그인 화면의 사용자 디렉터리(운영은 404) |
 | POST | `/api/friends` | `{code}` 친구 코드로 등록 |
 | POST | `/api/friends/:friendId/favorite` | 즐겨찾기 토글 |
 | DELETE | `/api/friends/:friendId` | 친구 삭제 |
@@ -109,7 +110,13 @@ npm run e2e        # 위 엔드투엔드 (52 단언)
 | WS | `/ws` | 세션 쿠키 인증. 실제 변경 시 `{type:'change', scope}` 브로드캐스트 |
 
 멱등성: 메시지·선물 전송은 `clientKey` 로, 1:1 방 열기는 두 사람 쌍 키로 중복을 막는다.
+동시 재시도도 안전하다 — 같은 `(scope, actor, key)` 에 트랜잭션 스코프 advisory 락을 잡아
+조회·실행·저장을 원자적으로 직렬화하므로, 겹친 재시도가 부수효과를 두 번 내지 못한다.
 WebSocket 은 실제 상태가 바뀐 뮤테이션에서만 신호를 낸다(무의미한 재렌더 루프 방지).
+
+CORS/쿠키: 프런트엔드가 다른 오리진이면 `CLIENT_ORIGIN` 으로 허용 오리진을 주면
+`@fastify/cors` 가 그 오리진만 허용하고 `credentials:true` 를 켠다. 세션 쿠키는 운영(HTTPS)에서
+`Secure`, 크로스 오리진이면 `SameSite=None` 으로 나간다(로컬 http 는 비-secure + `Lax`).
 
 ### dev 전용 seed/reset (운영에는 없음)
 
@@ -128,7 +135,9 @@ localRepository 의 데모용 `reset` 을 운영 API 로 노출하지 않기 위
 | `DATABASE_URL` | 위 기본 접속 문자열 | PostgreSQL 접속 (TCP) |
 | `PGHOST` | (없음) | 슬래시로 시작하면 유닉스 소켓 디렉터리로 접속 (테스트용) |
 | `COOKIE_SECRET` | dev 전용 값 | 세션 쿠키 서명. 운영에서는 반드시 주입 |
-| `DEV_TOOLS` | (없음) | `1` 이면 dev 전용 seed/reset 엔드포인트 개방 |
+| `CLIENT_ORIGIN` | (없음) | 크로스 오리진 프런트엔드 주소(콤마 구분). CORS 허용 오리진 + credentials, 쿠키 `SameSite=None` |
+| `COOKIE_SECURE` | `NODE_ENV=production` 이면 켜짐 | `1`=쿠키 `Secure` 강제, `0`=끄기(로컬 http) |
+| `DEV_TOOLS` | (없음) | `1`(또는 `NODE_ENV=test`)이면 dev 전용 엔드포인트 개방: seed/reset, `/api/dev/users`, `{userId}` 로그인 |
 
 ## 도메인 코드 재사용
 
