@@ -103,6 +103,23 @@ describe('review security & scoping fixes', () => {
         await prod.close();
       }
     });
+
+    it('dev user directory populates the demo login list without a session (pre-login)', async () => {
+      // 회귀: 로그인 화면의 "이미 있는 사람으로 들어가기" 목록은 아직 세션이 없는 상태에서
+      // 채워져야 한다. dev 디렉터리는 세션을 요구하지 않고 전체 로스터를 돌려준다.
+      await createUserSession(ctx.app, '홍길동');
+      await createUserSession(ctx.app, '김철수');
+
+      // 쿠키를 전혀 붙이지 않는다(로그인 전 상태).
+      const res = await ctx.app.inject({ method: 'GET', url: '/api/dev/users' });
+      expect(res.statusCode).toBe(200);
+      const names = (res.json().users as Array<{ name: string }>).map((u) => u.name).sort();
+      expect(names).toEqual(['김철수', '홍길동']);
+
+      // 대조: 스코핑된 스냅샷은 세션이 없으면 401 이라 목록을 채울 수 없다(디렉터리가 필요한 이유).
+      const snap = await ctx.app.inject({ method: 'GET', url: '/api/snapshot' });
+      expect(snap.statusCode).toBe(401);
+    });
   });
 
   describe('scoped snapshot does not leak non-parties', () => {

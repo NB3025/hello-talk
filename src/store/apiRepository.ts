@@ -87,9 +87,41 @@ export class ApiRepository implements Repository {
     this.fetchImpl = options.fetch ?? defaultFetch;
     this.makeWs =
       options.makeWebSocket === undefined ? defaultWebSocket : options.makeWebSocket;
+    // 데모 로그인 화면의 "이미 있는 사람으로 들어가기" 목록을 채우려면 로그인 전(세션 없음)에
+    // 전체 사용자 디렉터리가 필요하다. 스코핑된 스냅샷에는 남의 사용자가 없으므로, dev 백엔드가
+    // 여는 /api/dev/users 로 미러의 db.users 를 채운다(운영에서는 404 → 목록은 비어 있고,
+    // 그게 맞다: 운영 사용자는 {name} 으로 새 계정을 만든다).
+    void this.loadDirectory();
     // 초기 하이드레이트 + 실시간 연결.
     void this.hydrate();
     this.connect();
+  }
+
+  /**
+   * dev 전용 사용자 디렉터리(/api/dev/users)를 미러의 db.users 로 접어 넣는다.
+   * 로그인 화면(LoginScreen)이 db.users 를 그대로 읽으므로 이 한 번의 병합으로
+   * 서버 모드에서도 "이미 있는 사람으로 들어가기" 목록이 채워진다.
+   * 운영에서는 404(devTools off) 이므로 조용히 넘어간다.
+   */
+  async loadDirectory(): Promise<void> {
+    try {
+      const res = await this.fetchImpl(`${this.base}/api/dev/users`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { users: User[] };
+      if (!Array.isArray(data.users)) return;
+      this.mutate((db) => {
+        for (const user of data.users) {
+          const idx = db.users.findIndex((u) => u.id === user.id);
+          if (idx >= 0) db.users[idx] = user;
+          else db.users.push(user);
+        }
+      });
+    } catch {
+      /* 디렉터리 로드 실패는 조용히 넘긴다 — 운영(404)이거나 네트워크 문제 */
+    }
   }
 
   // ── 읽기 ──────────────────────────────────────────────────────────────

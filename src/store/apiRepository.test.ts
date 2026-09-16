@@ -15,6 +15,12 @@ class FakeBackend {
   sockets = new Set<FakeSocket>();
   /** 특정 경로를 강제로 거절시키고 싶을 때. */
   reject = new Set<string>();
+  /** dev 전용 사용자 디렉터리(/api/dev/users)를 열지 여부. */
+  devTools = true;
+  /** 스냅샷이 세션을 요구하는지(서버 모드 로그인 전 401 을 흉내). */
+  requireSessionForSnapshot = false;
+  /** requireSessionForSnapshot 이 켜졌을 때 세션이 있는지. */
+  hasSession = false;
 
   makeUser(name: string): User {
     const u: User = {
@@ -50,7 +56,16 @@ class FakeBackend {
     }
 
     if (path === '/api/snapshot' && method === 'GET') {
+      // 서버 모드의 스코핑된 스냅샷은 로그인 전에는 세션이 없어 401 이다(전체 로스터 없음).
+      if (this.requireSessionForSnapshot && !this.hasSession) {
+        return json(401, { error: '로그인이 필요합니다.' });
+      }
       return json(200, { db: this.db });
+    }
+    // dev 전용 사용자 디렉터리. 로그인 화면 목록용. 세션 없이도 열린다(devTools).
+    if (path === '/api/dev/users' && method === 'GET') {
+      if (!this.devTools) return json(404, { error: 'unknown' });
+      return json(200, { users: this.db.users });
     }
     if (path === '/api/auth/session' && method === 'POST') {
       if (body.userId) {
@@ -145,6 +160,33 @@ describe('ApiRepository 하이드레이트', () => {
 
     expect(repo.snapshot().users.map((u) => u.name)).toEqual(['홍길동']);
     expect(woken).toBe(1);
+    repo.dispose();
+  });
+
+  it('로그인 전(세션 없음)에도 /api/dev/users 로 로그인 목록을 채운다', async () => {
+    // 서버 모드 회귀: 스코핑된 스냅샷은 로그인 전 세션이 없어 401 이라 미러가 비어 있다.
+    // dev 사용자 디렉터리를 접어 넣어 LoginScreen 의 db.users 목록이 채워져야 한다.
+    const backend = new FakeBackend();
+    backend.requireSessionForSnapshot = true; // 로그인 전 스냅샷은 401
+    backend.makeUser('홍길동');
+    backend.makeUser('김철수');
+    const repo = make(backend, false);
+    await tick();
+
+    // 스냅샷은 401 이었지만 디렉터리로 미러의 db.users 가 채워진다.
+    expect(repo.snapshot().users.map((u) => u.name).sort()).toEqual(['김철수', '홍길동']);
+    repo.dispose();
+  });
+
+  it('운영(devTools off)에서는 /api/dev/users 가 404 라 목록이 비어 있다', async () => {
+    const backend = new FakeBackend();
+    backend.devTools = false;
+    backend.requireSessionForSnapshot = true;
+    backend.makeUser('홍길동');
+    const repo = make(backend, false);
+    await tick();
+    // 운영에서는 목록이 비어 있는 게 맞다({name} 으로 새 계정 생성).
+    expect(repo.snapshot().users).toHaveLength(0);
     repo.dispose();
   });
 

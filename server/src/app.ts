@@ -149,11 +149,12 @@ export const buildApp = (deps: AppDeps): FastifyInstance => {
 
   // 데모/개발 편의: 로그인 화면의 "이미 있는 사람으로 들어가기" 목록에 쓰는 사용자 디렉터리.
   // 스코핑된 스냅샷에는 남의 사용자 정보가 없으므로, devTools 에서만 여는 별도 경로로 제공한다.
-  // 운영에서는 열리지 않는다(사용자 열거 방지).
+  // 운영에서는 열리지 않는다(404, 사용자 열거 방지).
+  //
+  // 로그인 화면은 아직 세션이 없는 상태에서 이 목록을 채워야 하므로(로그인 전 하이드레이트),
+  // 세션을 요구하지 않는다 — 이 경로 자체가 devTools 에서만 열리고 운영에서는 사라진다.
   if (deps.devTools) {
-    app.get('/api/dev/users', async (req, reply) => {
-      const uid = await requireUser(req, reply);
-      if (!uid) return;
+    app.get('/api/dev/users', async () => {
       return { users: await repo.allUsers() };
     });
   }
