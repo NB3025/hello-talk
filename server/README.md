@@ -56,12 +56,34 @@ PostgreSQL 15 를 테스트 프로세스의 **자식 프로세스**로, **유닉
 설정은 `PGHOST`(소켓 디렉터리)로 오버라이드되며, 운영/로컬 개발에서는 그냥
 `DATABASE_URL`(TCP)로 붙는다 — 서버 코드는 어느 쪽인지 모른다(`src/db/pool.ts`).
 
+## 엔드투엔드 (e2e)
+
+```bash
+npm run e2e        # tsx scripts/e2e.ts
+```
+
+`scripts/e2e.ts` 는 **진짜 서버 + 진짜 PostgreSQL + 진짜 WebSocket** 을 상대로 두 개의 독립
+세션(쿠키 항아리 두 개)을 몰아 전체 흐름을 단언한다. 목도, localStorage 도 쓰지 않는다.
+DB 자식 프로세스 + Fastify(in-process, 실제 포트 listen) + WebSocket 클라이언트 두 개를 **한
+프로세스 안에서** 띄운다(테스트 하네스와 같은 이유 — 아래 "테스트" 참고). 흐름:
+
+1. 사용자 A·B 생성 (서버 발급 친구 코드)
+2. A 가 B 를 친구 코드로 등록 (단방향 확인)
+3. A<->B 1:1 방 열기 (멱등 — 두 번째 열기도 같은 방, 순서 무관)
+4. A 메시지 전송 → B 가 WebSocket 푸시로 수신, 읽음 상태(B 안읽음 증가 → markRead 로 0,
+   A 가 B 의 읽음 확인, no-op markRead 는 브로드캐스트 없음), clientKey 멱등
+5. A 가 B 에게 선물(주문+선물 메시지 원자적 안착) → B 수락(90일 교환권·소유권 이전) →
+   연장 1회 → 권한 실패(제3자·잘못된 행위자 거절, 상태 불변) → FORCE_EXPIRE 400 → 멱등
+
+실패하면 nonzero 로 종료한다. 마지막 실행은 52건 단언을 통과했다.
+
 ## 검증
 
 ```bash
 npm run typecheck  # tsc --noEmit
 npm run build      # tsc emit -> dist/ (타입·산출물 검증용). 런타임은 tsx 로 돈다.
-npm test           # 위 통합 테스트
+npm test           # 위 통합 테스트 (41건)
+npm run e2e        # 위 엔드투엔드 (52 단언)
 ```
 
 ## API

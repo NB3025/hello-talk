@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e": "tsx scripts/e2e.ts",
     "db:up": "bash scripts/db.sh up",
     "db:down": "bash scripts/db.sh down",
     "db:reset": "bash scripts/db.sh reset"
