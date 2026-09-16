@@ -10,15 +10,22 @@ export function AddFriendSheet({ me, onClose }: { me: User; onClose: () => void 
   const { repo } = useStore();
   const [code, setCode] = useState('');
   const [outcome, setOutcome] = useState<Outcome>(null);
+  const [busy, setBusy] = useState(false);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const result = repo.addFriendByCode(me.id, code);
-    if (result.ok) {
-      setOutcome({ kind: 'ok', friend: result.friend });
-      setCode('');
-    } else {
-      setOutcome({ kind: 'bad', reason: result.reason });
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await repo.addFriendByCode(me.id, code);
+      if (result.ok) {
+        setOutcome({ kind: 'ok', friend: result.friend });
+        setCode('');
+      } else {
+        setOutcome({ kind: 'bad', reason: result.reason });
+      }
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -70,8 +77,8 @@ export function AddFriendSheet({ me, onClose }: { me: User; onClose: () => void 
           <button className="pill" type="button" onClick={onClose}>
             닫기
           </button>
-          <button className="pill solid" type="submit" disabled={!code.trim()}>
-            추가
+          <button className="pill solid" type="submit" disabled={!code.trim() || busy}>
+            {busy ? '확인 중…' : '추가'}
           </button>
         </div>
       </form>

@@ -26,6 +26,8 @@ export function ChatRoomScreen({
   const { db, repo } = useStore();
   const [draft, setDraft] = useState('');
   const [openOrder, setOpenOrder] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const scroller = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
 
@@ -72,19 +74,29 @@ export function ChatRoomScreen({
     );
   }
 
-  const send = () => {
+  const send = async () => {
     const text = draft;
-    if (!text.trim()) return;
-    repo.sendMessage(chat.id, me.id, text);
-    setDraft('');
-    box.current?.focus();
+    if (!text.trim() || sending) return;
+    setSending(true);
+    setSendError('');
+    try {
+      const result = await repo.sendMessage(chat.id, me.id, text);
+      if (!result.ok) {
+        setSendError(result.reason);
+        return;
+      }
+      setDraft('');
+      box.current?.focus();
+    } finally {
+      setSending(false);
+    }
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Enter 로 보내고 Shift+Enter 로 줄바꿈 — 메신저의 관습.
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      send();
+      void send();
     }
   };
 
@@ -170,18 +182,27 @@ export function ChatRoomScreen({
         </div>
       </div>
 
+      {sendError ? (
+        <p className="note bad" role="alert">
+          {sendError}
+        </p>
+      ) : null}
       <div className="composer">
         <textarea
           ref={box}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setSendError('');
+          }}
           onKeyDown={onKeyDown}
           placeholder="메시지 입력"
           rows={1}
           aria-label="메시지 입력"
+          disabled={sending}
         />
-        <button className="sendbtn" onClick={send} disabled={!draft.trim()}>
-          전송
+        <button className="sendbtn" onClick={() => void send()} disabled={!draft.trim() || sending}>
+          {sending ? '전송 중' : '전송'}
         </button>
       </div>
 
