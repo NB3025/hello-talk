@@ -26,7 +26,7 @@
   // 프런트엔드의 순수 도메인 코드를 복사하지 않고 그대로 컴파일 대상에 넣는다.
   // src/domain/* 는 DOM·React·저장소를 모르는 순수 모듈이라 서버 빌드에 포함해도 된다.
   // 루트와 같은 bundler 해석을 쓰므로 확장자 없는 상대 import 가 그대로 동작한다.
-  "include": ["src", "../src/domain"],
+  "include": ["src", "test", "vitest.config.ts", "../src/domain", "../src/store/seed.ts"],
   // 도메인 쪽 테스트는 프런트엔드 러너(jsdom)에서만 돈다. 서버 빌드 산출물에 넣지 않는다.
   "exclude": ["../src/domain/**/*.test.ts", "dist"]
 }
