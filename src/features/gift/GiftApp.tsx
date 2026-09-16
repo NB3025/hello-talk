@@ -11,6 +11,7 @@ import {
   type ThemeId,
 } from '../../domain/products';
 import type { ChatId, User, UserId } from '../../domain/types';
+import { roadmapItem } from '../../domain/roadmap';
 import { GiftHome, GiftRanking, GiftThemeView } from './GiftHome';
 import { GiftBox } from './GiftBox';
 import { GiftMyPage } from './GiftMyPage';
@@ -27,9 +28,10 @@ import { VoucherSheet } from './VoucherSheet';
  * 하단 탭은 여전히 5개이고, 이 화면은 친구 프로필 시트(🎁 선물하기)나 더보기 그리드에서만
  * 열린다. 열린 뒤의 표면 크기는 B안의 주장이 아니었다.
  *
- * 하단 탭은 레퍼런스의 5개(홈·카테고리·브랜드·위시·선물함) 중 4개다.
- * `브랜드` 는 광고 자리라 뺐고, `위시` 는 위시리스트 모델이 없어 뺐다.
- * 대신 레퍼런스 04번의 마이페이지를 `마이` 로 둔다.
+ * 하단 탭은 레퍼런스의 5개(홈·카테고리·브랜드·위시·선물함) 중 4개를 구현하고 `위시` 는
+ * **오픈 예정**으로 자리만 잡았다. `브랜드` 는 광고 자리라 뺐다. 대신 레퍼런스 04번의
+ * 마이페이지를 `마이` 로 둔다. 위시리스트 모델은 단순하다(담은 사람·상품·공개범위) —
+ * 목록과 근거는 `docs/ROADMAP.md` 에 있다.
  */
 export type GiftTab = 'home' | 'category' | 'box' | 'my';
 
@@ -72,6 +74,7 @@ export function GiftApp({
   const usable = usableGifts(db, me.id, now).length;
   const pending = pendingGifts(db, me.id, now).length;
   const boxBadge = usable + pending;
+  const wishItem = roadmapItem('wish');
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -213,6 +216,17 @@ export function GiftApp({
             <span>{label}</span>
           </button>
         ))}
+        {wishItem ? (
+          <button disabled title={wishItem.note} aria-label="위시 — 오픈 예정">
+            <span className="glyph" aria-hidden="true">
+              {wishItem.glyph}
+            </span>
+            <span className="soon dot-only" aria-hidden="true">
+              예정
+            </span>
+            <span>위시</span>
+          </button>
+        ) : null}
       </nav>
 
       {openProduct ? (
