@@ -1,0 +1,7 @@
+{
+  "task_id": "task-hello-talk-backend",
+  "task_description": "Add a real backend (Node + TypeScript + Fastify + PostgreSQL) as the system of record for the hello-talk messenger, exposing REST commands/queries plus WebSocket real-time updates with HttpOnly session-cookie auth, reusing the existing pure domain logic (gift state machine, selectors) rather than reimplementing it, and enforcing all authorization/idempotency server-side. Then implement a frontend ApiRepository that satisfies the existing synchronous Repository interface (in-memory mirror hydrated from the server and kept live via WebSocket) and wire it in for production while keeping the 61 existing frontend tests green. Verify the real cross-session flow (create user, add friend, direct chat, messaging with read state, gift lifecycle) end-to-end and document run/test instructions. Do not commit the .kiro/ directory.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
+  "blocked_reason": null
+}

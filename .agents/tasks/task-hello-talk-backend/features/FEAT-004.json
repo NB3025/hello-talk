@@ -1,0 +1,27 @@
+{
+  "id": "FEAT-004",
+  "type": "docs",
+  "description": "End-to-end verification of the real client/server flow and documentation of how to run and test everything. Depends on FEAT-001..003. Proves the definition of done: a genuine cross-session flow works against the server (not localStorage), with documented commands. Also documents deployment posture (frontend stays on S3+CloudFront; backend + managed Postgres as a separate service) without inventing an undecided AWS compute service or applying Terraform (CLI not installed).",
+  "status": "pending",
+  "steps": [
+    "Provide a single documented local dev sequence: start Postgres (server/scripts/db.sh), run backend migrations + `npm run dev` in server/, and `npm run dev` for the frontend with VITE_API_BASE pointed at the backend. Confirm the frontend loads against the live server.",
+    "Run an end-to-end check of the real flow against the server (two browser sessions/tabs OR an automated HTTP+WS script driving two sessions): create user A and user B, A adds B by friend code, open a direct chat, A sends a message and B receives it via WebSocket with correct read-state (B's unread increments, clears on markRead, A sees 'read' after B reads), A sends a gift to B, B accepts (bubble flips to '사용중 · N일 남음' and ownership transfers), and run at least one further lifecycle action (e.g. use or extend, plus a rejected/authorization-failure case). Capture the exact commands/steps used and the observed results. If done via a script, place it under server/ or a scripts/ dir and document it.",
+    "Update README.md (or add server/README.md) with: backend architecture summary (Fastify + Postgres + REST + WS, session-cookie auth, domain-code reuse, single-instance in-process WS fan-out, no Redis yet), the exact run commands (Postgres via docker run, backend, frontend, env vars), the test commands (frontend `npm test`; backend `npm test` with Postgres running), and the idempotency/authorization guarantees. Keep the existing localStorage demo-mode explanation but note the server-backed mode.",
+    "Document deployment posture without fabricating: frontend continues on private S3 + CloudFront (existing infra-tf); the backend deploys as a separate service with separately provisioned managed PostgreSQL, isolated dev/prod, managed secrets, DB backups, logs, monitoring, health checks (GET /health exists). Explicitly note the concrete AWS backend compute service is not yet decided and that backend IaC is deferred (Terraform CLI not installed in this environment). Do NOT invent a specific compute service or write speculative backend Terraform.",
+    "Final green pass: root `npm test && npm run build && npm run typecheck`; server `npm test && npm run typecheck && npm run build` with Postgres up. Confirm `git status` shows all intended changes staged/committed on the feature branch and that .kiro/ remains uncommitted."
+  ],
+  "acceptance_criteria": [
+    "A documented, reproducible local setup brings up Postgres + backend + frontend and the frontend operates against the live server.",
+    "The full real flow (create users, add friend, direct chat, message with read state, gift send + accept + one more lifecycle action + an authorization-rejection case) is verified against the server and the commands/results are recorded.",
+    "README (root and/or server) documents run commands, test commands, env vars, and the architecture/guarantees; deployment posture is documented as deferred for backend compute without inventing a service.",
+    "Both frontend and backend test/build/typecheck pass in a final combined run; .kiro/ is not committed."
+  ],
+  "verification": [
+    "Root: `npm test && npm run build && npm run typecheck`.",
+    "Server (Postgres running): `npm test && npm run typecheck && npm run build`.",
+    "Execute the documented e2e sequence/script and confirm messages, read state, and gift lifecycle propagate via the server + WebSocket across two sessions.",
+    "`git status` confirms feature branch has the changes committed and .kiro/ is untracked."
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
