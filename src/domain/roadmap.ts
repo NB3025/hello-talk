@@ -13,7 +13,7 @@ export type RoadmapStatus =
   | 'shipped'
   /** 화면에 자리를 잡고 `오픈 예정` 으로 표시한다. */
   | 'soon'
-  /** 이 구조(서버 없음)로는 무리다. 화면에 자리를 만들지 않는다. */
+  /** 현재 제품 경계 밖이다. 별도 인프라·외부 플랫폼·운영 정책이 필요해 화면에 자리를 만들지 않는다. */
   | 'out';
 
 /**
@@ -170,13 +170,13 @@ export const ROADMAP: readonly RoadmapItem[] = [
     surface: 'more',
   },
 
-  // ── 이 구조로는 무리: 화면에 자리를 만들지 않는다 ────────────────────
+  // ── 현재 제품 경계 밖: 별도 인프라·외부 플랫폼·운영 정책이 필요하다 ────────
   {
     id: 'voicetalk',
     label: '보이스톡',
     glyph: '📞',
     status: 'out',
-    note: 'WebRTC 와 시그널링 서버가 필요하다. 서버가 없는 이 구조로는 흉내만 낼 수 있다.',
+    note: '기본 API 서버와 별도로 WebRTC 미디어·시그널링, TURN, 통화 상태·푸시 운영이 필요하다.',
     surface: 'chat',
   },
   {
@@ -184,7 +184,7 @@ export const ROADMAP: readonly RoadmapItem[] = [
     label: '톡클라우드',
     glyph: '☁',
     status: 'out',
-    note: '백업할 원격 저장소가 없다. localStorage 가 이미 유일한 사본이다.',
+    note: 'PostgreSQL 저장과 별개로 장기 보관·백업, 암호화, 기기 복원, 대용량 객체 저장 정책이 필요하다.',
     surface: 'more',
   },
   {
@@ -192,7 +192,7 @@ export const ROADMAP: readonly RoadmapItem[] = [
     label: '지도·친구위치',
     glyph: '📍',
     status: 'out',
-    note: '외부 지도 SDK 키가 필요하다. "어디야?"라는 대화를 지도로 대체하는 설계가 원형이다.',
+    note: '외부 지도 SDK·키와 위치 권한·보관 정책이 필요하다. "어디야?"라는 대화를 지도로 대체한다.',
     pattern: 'shared-container',
     surface: 'chat',
   },
@@ -201,7 +201,7 @@ export const ROADMAP: readonly RoadmapItem[] = [
     label: 'AI 대화 요약',
     glyph: '✨',
     status: 'out',
-    note: '모델 호출에 서버와 키가 필요하다.',
+    note: 'API 서버는 있지만 모델 공급자·비밀 관리·대화 전송 동의·보존 정책이 아직 없다.',
     surface: 'chat',
   },
 ];
