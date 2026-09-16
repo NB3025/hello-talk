@@ -123,8 +123,17 @@ class FakeBackend {
       return json(200, { chatId });
     }
     if (/^\/api\/chats\/[^/]+\/messages$/.test(path) && method === 'POST') {
+      const chatId = decodeURIComponent(path.split('/')[3] ?? '');
+      const senderId = this.db.users[0]?.id ?? 'me';
+      this.db.messages.push({
+        id: `srv-message-${this.db.messages.length}`,
+        chatId,
+        senderId,
+        text: String(body.text),
+        createdAt: Date.now(),
+      });
       this.broadcast('messages');
-      return json(200, { ok: true });
+      return json(200, { ok: true, messageId: this.db.messages.at(-1)?.id });
     }
     if (/^\/api\/chats\/[^/]+\/read$/.test(path) && method === 'POST') {
       return json(200, { ok: true });
@@ -231,6 +240,25 @@ describe('ApiRepository 하이드레이트', () => {
     expect(woken).toBe(0);
     repo.dispose();
   });
+  it('401 스냅샷은 오래된 미러를 지우고 세션 만료를 알린다', async () => {
+    const backend = new FakeBackend();
+    backend.devTools = false;
+    backend.requireSessionForSnapshot = true;
+    backend.hasSession = true;
+    backend.makeUser('홍길동');
+    const repo = make(backend, false);
+    await tick();
+    expect(repo.snapshot().users).toHaveLength(1);
+
+    let expired = 0;
+    repo.subscribeSessionExpired(() => (expired += 1));
+    backend.hasSession = false;
+    await repo.hydrate();
+
+    expect(expired).toBe(1);
+    expect(repo.snapshot()).toEqual(emptyDb());
+    repo.dispose();
+  });
 });
 
 describe('ApiRepository createUser', () => {
@@ -289,7 +317,7 @@ describe('ApiRepository openDirectChat', () => {
 });
 
 describe('ApiRepository sendMessage', () => {
-  it('미러를 갱신하고 서버에 POST 한다', async () => {
+  it('새 방 서버 확정을 기다린 뒤 전송하고 미러를 갱신한다', async () => {
     const backend = new FakeBackend();
     const me = backend.makeUser('나');
     const other = backend.makeUser('상대');
@@ -298,16 +326,16 @@ describe('ApiRepository sendMessage', () => {
     await tick();
 
     const chat = repo.openDirectChat(me.id, other.id);
-    repo.sendMessage(chat, me.id, '안녕');
+    // openDirectChat 응답을 기다리지 않고 바로 보내도 sendMessage가 방 확정을 기다린다.
+    const result = await repo.sendMessage(chat, me.id, '안녕');
+    expect(result).toEqual({ ok: true });
     expect(messagesOf(repo.snapshot(), chat).map((m) => m.text)).toEqual(['안녕']);
-    // 보낸 사람 자기 메시지는 안읽음이 아니다.
     expect(unreadCount(repo.snapshot(), chat, me.id)).toBe(0);
 
-    await tick();
-    const posted = spy.mock.calls.some(
+    const posted = spy.mock.calls.find(
       ([url, init]) => /\/messages$/.test(String(url)) && init?.method === 'POST',
     );
-    expect(posted).toBe(true);
+    expect(decodeURIComponent(String(posted?.[0]))).toContain(`srv-chat-${other.id}`);
     repo.dispose();
   });
 
@@ -318,7 +346,24 @@ describe('ApiRepository sendMessage', () => {
     const repo = make(backend, false);
     await tick();
     const chat = repo.openDirectChat(me.id, other.id);
-    repo.sendMessage(chat, me.id, '   ');
+    const result = await repo.sendMessage(chat, me.id, '   ');
+    expect(result).toEqual({ ok: false, reason: '메시지를 입력해 주세요.' });
+    expect(repo.snapshot().messages).toHaveLength(0);
+    repo.dispose();
+  });
+  it('서버 거절 시 메시지를 추가하지 않고 실패 이유를 돌려준다', async () => {
+    const backend = new FakeBackend();
+    const me = backend.makeUser('나');
+    const other = backend.makeUser('상대');
+    const repo = make(backend, false);
+    await tick();
+    const chat = repo.openDirectChat(me.id, other.id);
+    await tick();
+    const serverChatId = `srv-chat-${other.id}`;
+    backend.reject.add(`POST /api/chats/${encodeURIComponent(serverChatId)}/messages`);
+
+    const result = await repo.sendMessage(chat, me.id, '실패해야 함');
+    expect(result).toEqual({ ok: false, reason: '서버가 거절함' });
     expect(repo.snapshot().messages).toHaveLength(0);
     repo.dispose();
   });

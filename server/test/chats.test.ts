@@ -68,6 +68,32 @@ describe('chats & messaging & read state', () => {
     expect(snap.json().db.messages.length).toBe(0);
   });
 
+  it('does not create read state for a non-member', async () => {
+    const a = await createUserSession(ctx.app, '홍길동');
+    const b = await createUserSession(ctx.app, '김철수');
+    const outsider = await createUserSession(ctx.app, '이영희');
+    const chatId = (await openDirect(ctx, a.cookie, b.userId)).json().chatId as string;
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/api/chats/${chatId}/messages`,
+      headers: { cookie: a.cookie },
+      payload: { text: '멤버만 읽을 수 있음' },
+    });
+    const read = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/chats/${chatId}/read`,
+      headers: { cookie: outsider.cookie },
+    });
+    expect(read.statusCode).toBe(200);
+
+    const stored = await ctx.pool.query(
+      'SELECT 1 FROM reads WHERE chat_id = $1 AND user_id = $2',
+      [chatId, outsider.userId],
+    );
+    expect(stored.rowCount).toBe(0);
+  });
+
   it('computes unread from lastReadAt; own message is not unread; markRead clears', async () => {
     const a = await createUserSession(ctx.app, '홍길동');
     const b = await createUserSession(ctx.app, '김철수');

@@ -9,6 +9,7 @@ import type {
   Repository,
   SendGiftInput,
   SendGiftResult,
+  SendMessageResult,
 } from './repository';
 
 /**
@@ -69,9 +70,13 @@ export class ApiRepository implements Repository {
    * 방을 가리키지 않게), 서버로 나가는 요청·서버에서 오는 스냅샷은 이 매핑으로 번역한다.
    */
   private chatIdAliases = new Map<ChatId, ChatId>();
+  /** 임시 방 id가 서버 방 id로 확정될 때까지 메시지 전송이 기다리는 Promise. */
+  private chatReady = new Map<ChatId, Promise<ChatId | null>>();
   /** 겹치는 스냅샷 재요청이 순서 뒤집히지 않도록 직렬화한다. */
   private refreshChain: Promise<void> = Promise.resolve();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private sessionExpired = false;
+  private sessionListeners = new Set<() => void>();
 
   constructor(options: ApiRepositoryOptions) {
     this.base = options.baseUrl.replace(/\/+$/, '');
@@ -125,6 +130,12 @@ export class ApiRepository implements Repository {
     return () => this.listeners.delete(listener);
   }
 
+  subscribeSessionExpired(listener: () => void): () => void {
+    this.sessionListeners.add(listener);
+    if (this.sessionExpired) queueMicrotask(listener);
+    return () => this.sessionListeners.delete(listener);
+  }
+
   // ── 인증 (인터페이스 밖, StoreProvider 가 세션을 세우려고 호출) ────────────
   /** 기존 사용자로 서버 세션을 연다. 성공 시 사용자, 실패 시 null. */
   async signInExisting(userId: UserId): Promise<User | null> {
@@ -135,8 +146,10 @@ export class ApiRepository implements Repository {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ userId }),
       });
+      if (res.status === 401) this.expireSession();
       if (!res.ok) return null;
       const data = (await res.json()) as { user: User };
+      this.restoreSession();
       this.upsertUser(data.user);
       void this.refresh();
       return data.user;
@@ -152,8 +165,10 @@ export class ApiRepository implements Repository {
         method: 'GET',
         credentials: 'include',
       });
+      if (res.status === 401) this.expireSession();
       if (!res.ok) return null;
       const data = (await res.json()) as { user: User };
+      this.restoreSession();
       this.upsertUser(data.user);
       return data.user;
     } catch {
@@ -167,8 +182,8 @@ export class ApiRepository implements Repository {
         method: 'DELETE',
         credentials: 'include',
       });
-    } catch {
-      /* 무시 — 로컬 로그아웃은 StoreProvider 가 처리한다 */
+    } finally {
+      this.expireSession();
     }
   }
 
@@ -189,11 +204,13 @@ export class ApiRepository implements Repository {
       throw new Error('서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.');
     }
 
+    if (res.status === 401) this.expireSession();
     const data = (await res.json().catch(() => ({}))) as { user?: User; error?: string };
     if (!res.ok || !data.user) {
       throw new Error(data.error ?? '사용자를 만들지 못했습니다.');
     }
 
+    this.restoreSession();
     this.upsertUser(data.user);
     await this.refresh();
     return data.user;
@@ -220,6 +237,7 @@ export class ApiRepository implements Repository {
       return { ok: false, reason: '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.' };
     }
 
+    if (res.status === 401) this.expireSession();
     const data = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
       friend?: User;
@@ -285,23 +303,32 @@ export class ApiRepository implements Repository {
     const existing = directChatBetween(this.db, a, b);
     if (existing) return existing.id;
 
-    // 낙관적으로 방을 만들고 "안정된" 임시 id 를 돌려준다. 이 id 는 미러 안에서 절대 바뀌지
-    // 않는다 — 이 id 로 연 화면(App 의 openChat 상태)이 유령 방을 가리키는 일을 막는다.
-    // 서버가 확정한 방 id 는 별도 별칭 맵에 담아 두고, 나가는 요청·오는 스냅샷을 번역한다.
     const tempId = newId();
     this.mutate((db) => {
       if (directChatBetween(db, a, b)) return;
       db.chats.push({ id: tempId, memberIds: [a, b], createdAt: Date.now() });
     });
 
-    void this.command('/api/chats/direct', { targetId: b }, undefined, (data) => {
-      const serverId = (data as { chatId?: ChatId }).chatId;
-      if (!serverId || serverId === tempId) return;
-      // 임시 id 는 그대로 두고 서버 id 를 별칭으로 기록한다. 이후 스냅샷에 서버 id 로 오는
-      // 같은 방은 replace() 에서 임시 id 로 되접혀 하나로 유지된다.
-      this.chatIdAliases.set(tempId, serverId);
-      void this.refresh();
-    });
+    const ready = (async (): Promise<ChatId | null> => {
+      try {
+        const res = await this.fetchImpl(`${this.base}/api/chats/direct`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ targetId: b }),
+        });
+        if (res.status === 401) this.expireSession();
+        const data = (await res.json().catch(() => ({}))) as { chatId?: ChatId };
+        if (!res.ok || !data.chatId) return null;
+        this.chatIdAliases.set(tempId, data.chatId);
+        await this.refresh();
+        return data.chatId;
+      } catch {
+        return null;
+      }
+    })();
+    this.chatReady.set(tempId, ready);
+    void ready.finally(() => this.chatReady.delete(tempId));
 
     return directChatBetween(this.db, a, b)?.id ?? tempId;
   }
@@ -311,25 +338,47 @@ export class ApiRepository implements Repository {
     return this.chatIdAliases.get(id) ?? id;
   }
 
-  sendMessage(chatId: ChatId, senderId: UserId, text: string): void {
+  async sendMessage(chatId: ChatId, senderId: UserId, text: string): Promise<SendMessageResult> {
     const body = text.trim();
-    if (!body) return;
+    if (!body) return { ok: false, reason: '메시지를 입력해 주세요.' };
     const chat = this.db.chats.find((c) => c.id === chatId);
-    if (!chat || !chat.memberIds.includes(senderId)) return;
+    if (!chat || !chat.memberIds.includes(senderId)) {
+      return { ok: false, reason: '대화방을 찾을 수 없거나 메시지를 보낼 권한이 없습니다.' };
+    }
 
-    const now = Date.now();
-    const localId = newId();
-    this.mutate((db) => {
-      const c = db.chats.find((x) => x.id === chatId);
-      if (!c || !c.memberIds.includes(senderId)) return;
-      db.messages.push({ id: localId, chatId, senderId, text: body, createdAt: now });
-      upsertRead(db, chatId, senderId, now);
-    });
+    const pendingChat = this.chatReady.get(chatId);
+    const serverChatId = pendingChat ? await pendingChat : this.toServerChatId(chatId);
+    if (!serverChatId) {
+      return { ok: false, reason: '대화방을 열지 못했습니다. 네트워크를 확인해 주세요.' };
+    }
 
-    void this.command(
-      `/api/chats/${encodeURIComponent(this.toServerChatId(chatId))}/messages`,
-      { text: body, clientKey: localId },
-    );
+    try {
+      const res = await this.fetchImpl(
+        `${this.base}/api/chats/${encodeURIComponent(serverChatId)}/messages`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: body, clientKey: newId() }),
+        },
+      );
+      if (res.status === 401) this.expireSession();
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        reason?: string;
+        error?: string;
+      };
+      if (!res.ok || data.ok !== true) {
+        return {
+          ok: false,
+          reason: data.reason ?? data.error ?? '메시지를 보내지 못했습니다. 다시 시도해 주세요.',
+        };
+      }
+      await this.refresh();
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: '서버에 연결하지 못했습니다. 메시지는 전송되지 않았습니다.' };
+    }
   }
 
   markRead(chatId: ChatId, userId: UserId): void {
@@ -454,6 +503,8 @@ export class ApiRepository implements Repository {
       this.ws = null;
     }
     this.listeners.clear();
+    this.sessionListeners.clear();
+    this.chatReady.clear();
   }
 
   // ── 내부 ──────────────────────────────────────────────────────────────
@@ -465,6 +516,10 @@ export class ApiRepository implements Repository {
         method: 'GET',
         credentials: 'include',
       });
+      if (res.status === 401) {
+        this.expireSession();
+        return;
+      }
       if (!res.ok) return;
       const data = (await res.json()) as { db: Db };
       this.replace({ ...emptyDb(), ...data.db });
@@ -480,7 +535,7 @@ export class ApiRepository implements Repository {
   }
 
   private connect(): void {
-    if (this.disposed || this.makeWs === false) return;
+    if (this.disposed || this.sessionExpired || this.makeWs === false) return;
     const wsUrl = `${toWsUrl(this.base)}/ws`;
     let ws: WebSocketLike;
     try {
@@ -504,7 +559,7 @@ export class ApiRepository implements Repository {
   }
 
   private scheduleReconnect(): void {
-    if (this.disposed || this.makeWs === false) return;
+    if (this.disposed || this.sessionExpired || this.makeWs === false) return;
     if (this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -512,6 +567,29 @@ export class ApiRepository implements Repository {
       void this.refresh();
       this.connect();
     }, 1500);
+  }
+
+  private expireSession(): void {
+    if (this.sessionExpired) return;
+    this.sessionExpired = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    const current = this.ws;
+    this.ws = null;
+    try {
+      current?.close();
+    } catch {
+      /* 이미 닫힌 소켓 */
+    }
+    this.replace(emptyDb());
+    void this.loadDirectory();
+    this.sessionListeners.forEach((listener) => listener());
+  }
+
+  private restoreSession(): void {
+    if (!this.sessionExpired) return;
+    this.sessionExpired = false;
+    this.connect();
   }
 
   private upsertUser(user: User): void {
@@ -592,6 +670,7 @@ export class ApiRepository implements Repository {
       } catch {
         /* 바디 없음 */
       }
+      if (res.status === 401) this.expireSession();
       const rejected =
         !res.ok || (data !== null && typeof data === 'object' && (data as { ok?: boolean }).ok === false);
       if (rejected) {

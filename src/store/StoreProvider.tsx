@@ -43,13 +43,15 @@ interface SessionAware {
   signInExisting(userId: UserId): Promise<User | null>;
   currentUser(): Promise<User | null>;
   signOutSession(): Promise<void>;
+  subscribeSessionExpired(listener: () => void): () => void;
 }
 
 const asSessionAware = (repo: Repository): SessionAware | null => {
   const maybe = repo as unknown as Partial<SessionAware>;
   return typeof maybe.signInExisting === 'function' &&
     typeof maybe.currentUser === 'function' &&
-    typeof maybe.signOutSession === 'function'
+    typeof maybe.signOutSession === 'function' &&
+    typeof maybe.subscribeSessionExpired === 'function'
     ? (repo as unknown as SessionAware)
     : null;
 };
@@ -98,15 +100,24 @@ export function StoreProvider({
     [session],
   );
 
-  const signOut = useCallback(() => {
+  const clearLocalSession = useCallback(() => {
     try {
       sessionStorage.removeItem(ME_KEY);
     } catch {
       /* 무시 */
     }
     setMeId(null);
+  }, []);
+
+  const signOut = useCallback(() => {
+    clearLocalSession();
     if (session) void session.signOutSession();
-  }, [session]);
+  }, [clearLocalSession, session]);
+
+  useEffect(() => {
+    if (!session) return;
+    return session.subscribeSessionExpired(clearLocalSession);
+  }, [session, clearLocalSession]);
 
   // 새로고침 후 서버 세션이 살아 있으면 me 를 복원한다.
   useEffect(() => {

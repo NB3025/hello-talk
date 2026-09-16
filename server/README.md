@@ -52,16 +52,12 @@ curl -s http://127.0.0.1:5311/health   # => {"status":"ok"}
 npm test           # vitest run — 진짜 PostgreSQL 통합 테스트
 ```
 
-테스트는 **자체 완결**이다. `vitest` 의 globalSetup(`test/globalSetup.ts`)이 진짜
-PostgreSQL 15 를 테스트 프로세스의 **자식 프로세스**로, **유닉스 소켓** 위에 띄운다
-(`initdb` + `postgres`, 비특권 `postgres` OS 사용자로 실행). 시작·마이그레이션·테스트·종료가
-`npm test` 한 번의 수명 안에서 모두 일어난다. DB 가 뜨지 않으면 조용히 건너뛰지 않고
-크게 실패한다.
+통합 테스트의 globalSetup(`test/globalSetup.ts`)은 시스템의 `initdb`·`postgres` 바이너리와
+`postgres` OS 사용자를 이용해 테스트 프로세스의 **자식 프로세스**로 DB를 띄운다. 이 전제가
+없는 호스트에서는 통합 테스트가 시작 전에 실패한다. 설정 테스트는 DB 없이 독립 실행할 수 있고,
+DB 경로는 로컬 Docker PostgreSQL로 별도 스모크할 수 있다.
 
-이 방식을 쓰는 이유: 이 실행 환경에서는 각 셸 명령이 수명이 짧은 PID·네트워크
-네임스페이스에서 돌아 별도로 띄운 서버(Docker/백그라운드 프로세스)에 TCP 로 붙을 수
-없다. 그래서 테스트는 같은 프로세스 수명 안의 자식 + 유닉스 소켓 경로를 쓴다. 접속
-설정은 `PGHOST`(소켓 디렉터리)로 오버라이드되며, 운영/로컬 개발에서는 그냥
+접속 설정은 `PGHOST`(소켓 디렉터리)로 오버라이드되며, 운영/로컬 개발에서는
 `DATABASE_URL`(TCP)로 붙는다 — 서버 코드는 어느 쪽인지 모른다(`src/db/pool.ts`).
 
 ## 엔드투엔드 (e2e)
@@ -91,7 +87,7 @@ DB 자식 프로세스 + Fastify(in-process, 실제 포트 listen) + WebSocket �
 npm run typecheck  # tsc --noEmit
 npm run build      # 실행 가능한 dist/server.js + dist/schema.sql
 npm start          # 빌드 산출물을 node 로 실행
-npm test           # 위 통합 테스트 (54건 + 설정 테스트)
+npm test           # 위 통합 테스트 55건 + 설정 테스트 5건
 npm run e2e        # 위 엔드투엔드 (52 단언)
 ```
 

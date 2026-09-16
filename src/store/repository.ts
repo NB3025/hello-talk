@@ -23,7 +23,8 @@ export interface Repository {
 
   /** 이미 있으면 그 방을, 없으면 새로 만들어 방 id 를 돌려준다. */
   openDirectChat(a: UserId, b: UserId): ChatId;
-  sendMessage(chatId: ChatId, senderId: UserId, text: string): void;
+  /** 로컬은 즉시, 서버는 실제 전송 응답 뒤 결과를 돌려준다. */
+  sendMessage(chatId: ChatId, senderId: UserId, text: string): RepositoryResult<SendMessageResult>;
   markRead(chatId: ChatId, userId: UserId): void;
 
   /**
@@ -59,3 +60,5 @@ export type GiftCommandResult = { ok: true; text: string } | { ok: false; reason
 export type AddFriendResult =
   | { ok: true; friend: User }
   | { ok: false; reason: string };
+
+export type SendMessageResult = { ok: true } | { ok: false; reason: string };

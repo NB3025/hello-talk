@@ -323,6 +323,12 @@ export class ServerRepository {
 
   async markRead(chatId: ChatId, userId: UserId): Promise<Mutation<void>> {
     return this.tx(async (c) => {
+      const member = await c.query(
+        'SELECT 1 FROM chat_members WHERE chat_id = $1 AND user_id = $2',
+        [chatId, userId],
+      );
+      if (member.rowCount === 0) return { result: undefined, changed: false };
+
       const db = await this.snapshot(c);
       // 읽을 것이 없으면 아무것도 하지 않는다 (no-op 은 브로드캐스트하지 않는다).
       if (unreadCount(db, chatId, userId) === 0) return { result: undefined, changed: false };
