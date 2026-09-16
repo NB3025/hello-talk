@@ -15,6 +15,7 @@ import type {
   Repository,
   SendGiftInput,
   SendGiftResult,
+  SendMessageResult,
 } from './repository';
 import { seedUsers } from './seed';
 
@@ -150,17 +151,21 @@ export class LocalRepository implements Repository {
     return directChatBetween(this.db, a, b)?.id ?? id;
   }
 
-  sendMessage(chatId: ChatId, senderId: UserId, text: string): void {
+  sendMessage(chatId: ChatId, senderId: UserId, text: string): SendMessageResult {
     const body = text.trim();
-    if (!body) return;
+    if (!body) return { ok: false, reason: '메시지를 입력해 주세요.' };
+    let sent = false;
     this.write((db) => {
       const chat = db.chats.find((c) => c.id === chatId);
       if (!chat || !chat.memberIds.includes(senderId)) return;
       const now = Date.now();
       db.messages.push({ id: newId(), chatId, senderId, text: body, createdAt: now });
-      // 보낸 사람은 자기 메시지를 읽은 것으로 본다.
       upsertRead(db, chatId, senderId, now);
+      sent = true;
     });
+    return sent
+      ? { ok: true }
+      : { ok: false, reason: '대화방을 찾을 수 없거나 메시지를 보낼 권한이 없습니다.' };
   }
 
   markRead(chatId: ChatId, userId: UserId): void {

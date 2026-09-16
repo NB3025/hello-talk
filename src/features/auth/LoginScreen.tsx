@@ -6,12 +6,22 @@ export function LoginScreen() {
   const { db, repo, signIn } = useStore();
   const [name, setName] = useState('');
   const [status, setStatus] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
-  const create = (e: React.FormEvent) => {
+  const create = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
-    const user = repo.createUser(name, status);
-    signIn(user.id);
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const user = await repo.createUser(name, status);
+      signIn(user.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '사용자를 만들지 못했습니다.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const people = [...db.users].sort((a, b) => a.createdAt - b.createdAt);
@@ -49,9 +59,14 @@ export function LoginScreen() {
               autoComplete="off"
             />
           </label>
+          {error ? (
+            <p className="note bad" role="alert">
+              {error}
+            </p>
+          ) : null}
           <div className="actionsrow">
-            <button className="pill solid" type="submit" disabled={!name.trim()}>
-              이 이름으로 시작
+            <button className="pill solid" type="submit" disabled={!name.trim() || busy}>
+              {busy ? '만드는 중…' : '이 이름으로 시작'}
             </button>
           </div>
         </form>
