@@ -1,13 +1,7 @@
-import { hueFor, newFriendCode, newId } from '../domain/ids';
+import { newId } from '../domain/ids';
 import { applyGiftAction, checkGiftAction, newGiftOrder, type GiftAction } from '../domain/gift';
 import { productById } from '../domain/products';
-import {
-  directChatBetween,
-  findUserByCode,
-  isFriend,
-  normalizeCode,
-  unreadCount,
-} from '../domain/selectors';
+import { directChatBetween, normalizeCode, unreadCount } from '../domain/selectors';
 import { emptyDb, type ChatId, type Db, type User, type UserId } from '../domain/types';
 import type {
   AddFriendResult,
@@ -18,16 +12,13 @@ import type {
 } from './repository';
 
 /**
- * 서버(FEAT-002)를 뒤에 둔 저장소. LocalRepository 와 같은 동기 인터페이스를 지키되,
- * 실제 진실은 서버에 있다.
+ * 서버(FEAT-002)를 뒤에 둔 저장소. 렌더 경로는 동기 인메모리 Db 미러를 쓰고,
+ * 서버만 답할 수 있는 사용자 생성·친구 코드 등록은 권위 있는 응답을 기다린다.
  *
- * 어떻게 동기 계약을 지키는가:
- *  - 인메모리 `Db` 미러를 들고 있다(빈 db 에서 시작 → GET /api/snapshot 으로 하이드레이트).
- *  - /ws 로 서버의 변경 신호를 받으면 스냅샷을 다시 받아 미러를 갱신한다.
- *  - 쓰기 명령은 미러를 낙관적으로(즉시) 갱신해 동기 반환값을 옳게 만든 뒤,
- *    credentials:'include' 로 비동기 fetch 를 쏘고 서버 응답으로 재조정/롤백한다.
- *  - 낙관적 검증·거절 문구는 도메인 코드(selectors, checkGiftAction)를 그대로 재사용해
- *    LocalRepository 와 동작이 일치한다.
+ * - GET /api/snapshot + /ws 변경 신호로 미러를 최신 상태로 유지한다.
+ * - 사용자 생성과 친구 등록은 임시 id/스코핑된 미러 추측을 만들지 않고 서버 결과를 반환한다.
+ * - 나머지 즉시 UI 명령은 미러를 낙관적으로 갱신하고 서버 응답으로 재조정한다.
+ * - 내용이 같으면 emit 하지 않아 useSyncExternalStore의 참조 계약과 React #185 회귀를 지킨다.
  *
  * LocalRepository 와 같은 무한 루프 회귀 방지 규율: 직렬화 문자열이 실제로 달라졌을
  * 때만 구독자에게 알린다(React #185).
@@ -182,79 +173,78 @@ export class ApiRepository implements Repository {
   }
 
   // ── 쓰기 ──────────────────────────────────────────────────────────────
-  createUser(name: string, statusMessage = ''): User {
+  async createUser(name: string, statusMessage = ''): Promise<User> {
     const trimmed = name.trim();
     if (!trimmed) throw new Error('이름이 비어 있습니다.');
-    // 서버가 권위 있는 사용자·세션을 만든다. 하지만 인터페이스가 동기라
-    // 임시(provisional) 사용자를 미러에 넣고 즉시 돌려준 뒤, 응답이 오면 서버 것으로 채택한다.
-    const provisional: User = {
-      id: newId(),
-      code: newFriendCode(),
-      name: trimmed,
-      statusMessage: statusMessage.trim(),
-      hue: hueFor(trimmed + newId()),
-      createdAt: Date.now(),
-    };
-    this.mutate((db) => {
-      db.users.push(provisional);
-    });
 
-    void (async () => {
-      try {
-        const res = await this.fetchImpl(`${this.base}/api/auth/session`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ name: trimmed, statusMessage: statusMessage.trim() }),
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as { user: User };
-        // 서버의 권위 있는 사용자로 임시 사용자를 대체한다(id 정렬).
-        this.mutate((db) => {
-          const idx = db.users.findIndex((u) => u.id === provisional.id);
-          if (idx >= 0) db.users[idx] = data.user;
-          else if (!db.users.some((u) => u.id === data.user.id)) db.users.push(data.user);
-        });
-        void this.refresh();
-      } catch {
-        /* 네트워크 실패 시 임시 사용자를 남겨둔다 — 다음 스냅샷에서 정리된다 */
-      }
-    })();
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.base}/api/auth/session`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: trimmed, statusMessage: statusMessage.trim() }),
+      });
+    } catch {
+      throw new Error('서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    }
 
-    return provisional;
+    const data = (await res.json().catch(() => ({}))) as { user?: User; error?: string };
+    if (!res.ok || !data.user) {
+      throw new Error(data.error ?? '사용자를 만들지 못했습니다.');
+    }
+
+    this.upsertUser(data.user);
+    await this.refresh();
+    return data.user;
   }
 
-  addFriendByCode(ownerId: UserId, code: string): AddFriendResult {
-    // 낙관적 검증: LocalRepository 와 같은 셀렉터·문구를 그대로 쓴다.
+  async addFriendByCode(ownerId: UserId, code: string): Promise<AddFriendResult> {
     const typed = normalizeCode(code);
     if (!typed) return { ok: false, reason: '친구 코드를 입력해 주세요.' };
-    const db = this.db;
-    const me = db.users.find((u) => u.id === ownerId);
+    const me = this.db.users.find((u) => u.id === ownerId);
     if (!me) return { ok: false, reason: '로그인 정보를 찾을 수 없습니다.' };
     if (normalizeCode(me.code) === typed) {
       return { ok: false, reason: '내 코드입니다. 상대의 코드를 받아 입력해 주세요.' };
     }
-    const found = findUserByCode(db, code);
-    if (!found) return { ok: false, reason: `${formatCode(typed)} 코드를 쓰는 사람이 없습니다.` };
-    if (isFriend(db, ownerId, found.id)) {
-      return { ok: false, reason: `${found.name} 님은 이미 친구입니다.` };
+
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.base}/api/friends`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+    } catch {
+      return { ok: false, reason: '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.' };
     }
 
-    // 낙관적으로 미러에 넣는다.
-    this.mutate((next) => {
-      next.friendships.push({ ownerId, friendId: found.id, createdAt: Date.now(), favorite: false });
-    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      friend?: User;
+      reason?: string;
+      error?: string;
+    };
+    if (!res.ok || data.ok !== true || !data.friend) {
+      return { ok: false, reason: data.reason ?? data.error ?? '친구를 추가하지 못했습니다.' };
+    }
 
-    void this.command('/api/friends', { code }, () => {
-      // 서버가 거절하면 낙관적 추가를 되돌린다.
-      this.mutate((next) => {
-        next.friendships = next.friendships.filter(
-          (f) => !(f.ownerId === ownerId && f.friendId === found.id),
-        );
-      });
+    this.mutate((db) => {
+      const userIndex = db.users.findIndex((u) => u.id === data.friend!.id);
+      if (userIndex >= 0) db.users[userIndex] = data.friend!;
+      else db.users.push(data.friend!);
+      if (!db.friendships.some((f) => f.ownerId === ownerId && f.friendId === data.friend!.id)) {
+        db.friendships.push({
+          ownerId,
+          friendId: data.friend!.id,
+          createdAt: Date.now(),
+          favorite: false,
+        });
+      }
     });
-
-    return { ok: true, friend: found };
+    await this.refresh();
+    return { ok: true, friend: data.friend };
   }
 
   toggleFavorite(ownerId: UserId, friendId: UserId): void {
@@ -621,9 +611,6 @@ const upsertRead = (db: Db, chatId: ChatId, userId: UserId, at: number): void =>
   if (found) found.lastReadAt = Math.max(found.lastReadAt, at);
   else db.reads.push({ chatId, userId, lastReadAt: at });
 };
-
-const formatCode = (normalized: string): string =>
-  normalized.startsWith('HT') ? `HT-${normalized.slice(2)}` : normalized;
 
 const toWsUrl = (httpBase: string): string =>
   httpBase.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');

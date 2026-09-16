@@ -73,7 +73,10 @@ export function FriendsScreen({
                   <div className="name">{u.name}</div>
                   <div className="sub">{u.code}</div>
                 </div>
-                <button className="pill solid" onClick={() => repo.addFriendByCode(me.id, u.code)}>
+                <button
+                  className="pill solid"
+                  onClick={() => void Promise.resolve(repo.addFriendByCode(me.id, u.code))}
+                >
                   나도 추가
                 </button>
               </div>

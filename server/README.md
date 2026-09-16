@@ -16,21 +16,29 @@ hello-talk 프런트엔드를 위한 백엔드다. Node.js + TypeScript + Fastif
 
 ## PostgreSQL (로컬 개발)
 
+고정 개발 비밀번호를 소스에 두지 않는다. 터미널에서 로컬 전용 값을 만든 뒤 같은
+`DB_PASSWORD` 를 DB 스크립트와 서버 프로세스에 전달한다.
+
 ```bash
-npm run db:up      # 컨테이너를 띄우고 접속 가능해질 때까지 대기
+export DB_PASSWORD="$(openssl rand -hex 24)"
+export COOKIE_SECRET="$(openssl rand -hex 32)"
+
+npm run db:up      # 컨테이너를 127.0.0.1 에만 바인딩하고 접속 가능할 때까지 대기
 npm run db:down    # 컨테이너 제거
 npm run db:reset   # 초기화 후 재시작
 bash scripts/db.sh status   # pg_isready
 ```
 
-기본 접속 문자열: `postgres://postgres:postgres@127.0.0.1:5432/hello_talk`
+로컬 접속 문자열은 `postgres://postgres:<DB_PASSWORD>@127.0.0.1:5432/hello_talk` 형태로
+런타임에 조립된다. 운영에서는 완성된 `DATABASE_URL` 을 비밀 저장소에서 주입한다.
 
 ## 개발 / 실행
 
 ```bash
 npm install
-npm run dev        # tsx watch 로 소스에서 바로 실행 (부팅 시 자동 마이그레이션)
-npm start          # tsx 로 1회 실행
+npm run dev        # 위에서 export 한 DB_PASSWORD/COOKIE_SECRET 사용, 부팅 시 자동 마이그레이션
+npm run build      # dist/server.js + dist/schema.sql 생성
+npm start          # node dist/server.js 실행
 
 curl -s http://127.0.0.1:5311/health   # => {"status":"ok"}
 ```
@@ -81,8 +89,9 @@ DB 자식 프로세스 + Fastify(in-process, 실제 포트 listen) + WebSocket �
 
 ```bash
 npm run typecheck  # tsc --noEmit
-npm run build      # tsc emit -> dist/ (타입·산출물 검증용). 런타임은 tsx 로 돈다.
-npm test           # 위 통합 테스트 (41건)
+npm run build      # 실행 가능한 dist/server.js + dist/schema.sql
+npm start          # 빌드 산출물을 node 로 실행
+npm test           # 위 통합 테스트 (54건 + 설정 테스트)
 npm run e2e        # 위 엔드투엔드 (52 단언)
 ```
 

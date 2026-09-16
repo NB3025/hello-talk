@@ -43,18 +43,28 @@ const directPairKey = (a: UserId, b: UserId): string => [a, b].sort().join('::')
 export class ServerRepository {
   constructor(private pool: Pool) {}
 
-  private async tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
+  private async tx<T>(
+    fn: (c: PoolClient) => Promise<T>,
+    existingClient?: PoolClient,
+  ): Promise<T> {
+    // withIdempotency 가 이미 트랜잭션을 연 경우 같은 커넥션을 그대로 쓴다.
+    // 별도 커넥션을 다시 빌리면 풀을 자기 자신으로 고갈시키고, 키 저장과 부수효과도
+    // 서로 다른 커밋이 되어 원자성이 깨진다.
+    if (existingClient) return fn(existingClient);
+
     const client = await this.pool.connect();
+    let failed: unknown;
     try {
       await client.query('BEGIN');
       const out = await fn(client);
       await client.query('COMMIT');
       return out;
     } catch (err) {
-      await client.query('ROLLBACK');
+      failed = err;
+      await client.query('ROLLBACK').catch(() => undefined);
       throw err;
     } finally {
-      client.release();
+      client.release(failed instanceof Error ? failed : undefined);
     }
   }
 
@@ -289,6 +299,7 @@ export class ServerRepository {
     chatId: ChatId,
     senderId: UserId,
     text: string,
+    client?: PoolClient,
   ): Promise<Mutation<{ ok: boolean; messageId?: string }>> {
     const body = text.trim();
     if (!body) return { result: { ok: false }, changed: false };
@@ -307,7 +318,7 @@ export class ServerRepository {
       );
       await upsertRead(c, chatId, senderId, now);
       return { result: { ok: true, messageId }, changed: true };
-    });
+    }, client);
   }
 
   async markRead(chatId: ChatId, userId: UserId): Promise<Mutation<void>> {
@@ -322,12 +333,15 @@ export class ServerRepository {
 
   // ── 선물 ──────────────────────────────────────────────────────────────
 
-  async sendGift(input: {
-    senderId: UserId;
-    receiverId: UserId;
-    productId: string;
-    message: string;
-  }): Promise<Mutation<SendGiftResult>> {
+  async sendGift(
+    input: {
+      senderId: UserId;
+      receiverId: UserId;
+      productId: string;
+      message: string;
+    },
+    client?: PoolClient,
+  ): Promise<Mutation<SendGiftResult>> {
     const { senderId, receiverId, productId, message } = input;
     if (senderId === receiverId) {
       return { result: { ok: false, reason: '자기 자신에게는 선물할 수 없습니다.' }, changed: false };
@@ -345,7 +359,6 @@ export class ServerRepository {
         return { result: { ok: false, reason: '받는 사람을 찾을 수 없습니다.' }, changed: false };
       }
 
-      // 선물은 대화 위에서 전달된다. 방이 없으면 여기서 만든다(멱등).
       const chatId = await this.ensureDirectChat(c, senderId, receiverId);
       const orderId = newId();
       const now = Date.now();
@@ -367,7 +380,7 @@ export class ServerRepository {
       );
       await upsertRead(c, chatId, senderId, now);
       return { result: { ok: true, orderId, chatId }, changed: true };
-    });
+    }, client);
   }
 
   async giftAction(
@@ -417,36 +430,25 @@ export class ServerRepository {
   // ── 멱등성 ──────────────────────────────────────────────────────────────
 
   /**
-   * 멱등 키가 있으면 저장된 결과를 그대로 돌려준다. 없으면 fn 을 돌리고 결과를 저장한다.
-   * 메시지·선물·방 열기 재시도가 중복 생성하지 않게 한다.
-   *
-   * 동시성: 같은 (scope, actor, key) 로 재시도가 겹쳐도 부수효과가 두 번 나면 안 된다.
-   * 그래서 이 (scope, actor, key) 에 대한 트랜잭션 스코프 advisory 락을 먼저 잡는다 —
-   * 락을 잡은 트랜잭션이 커밋될 때까지 같은 키의 다른 요청은 여기서 대기한다. 락을 잡은 뒤
-   * 저장된 결과가 이미 있으면 그것을 돌려주고(중복 실행 없음), 없으면 fn 을 실행하고 결과를
-   * 저장한 다음 커밋한다. lookup·실행·저장이 하나의 트랜잭션 안에서 원자적으로 일어난다.
-   *
-   * 주의: fn(mutator) 은 내부에서 자체 트랜잭션을 연다. Postgres 는 같은 커넥션 안에서
-   * 트랜잭션을 중첩하지 않으므로(자식 BEGIN/COMMIT 은 무시/경고), 여기서 잡은 advisory 락은
-   * 이 커넥션(=게이트 트랜잭션)에 매여 있고, fn 의 커밋과 무관하게 게이트가 커밋될 때 풀린다.
-   * 결과 저장까지 마친 뒤 게이트를 커밋하므로, 대기하던 재시도는 저장된 결과를 반드시 본다.
+   * 같은 (scope, actor, key)의 재시도를 advisory lock으로 직렬화한다.
+   * 락·기존 결과 조회·mutator 부수효과·결과 저장은 모두 gate 커넥션의 한 트랜잭션에서
+   * 실행된다. 따라서 풀 커넥션을 이중 점유하지 않고, 부수효과와 키가 따로 커밋되지 않는다.
    */
   async withIdempotency<T>(
     scope: string,
     actorId: UserId,
     key: string | undefined,
-    fn: () => Promise<Mutation<T>>,
+    fn: (client?: PoolClient) => Promise<Mutation<T>>,
   ): Promise<Mutation<T>> {
     if (!key) return fn();
 
     const gate = await this.pool.connect();
+    let failed: unknown;
     try {
       await gate.query('BEGIN');
-      // 이 (scope, actor, key) 에 대한 트랜잭션 스코프 락. 같은 키의 동시 재시도는 직렬화된다.
       const [k1, k2] = advisoryKey(scope, actorId, key);
       await gate.query('SELECT pg_advisory_xact_lock($1, $2)', [k1, k2]);
 
-      // 락을 잡은 뒤에 조회한다 — 앞선 요청이 이미 저장했다면 그 결과를 그대로 돌려준다.
       const existing = await gate.query(
         'SELECT result FROM idempotency_keys WHERE scope = $1 AND actor_id = $2 AND key = $3',
         [scope, actorId, key],
@@ -456,26 +458,23 @@ export class ServerRepository {
         return { result: existing.rows[0].result as T, changed: false };
       }
 
-      // 아직 없다 — 이 요청이 실행한다. fn 은 자체 트랜잭션에서 부수효과를 커밋한다.
-      const out = await fn();
-      // 성공했을 때만 키를 남긴다. 실패(검증 거절)는 재시도 시 다시 평가받아야 한다.
+      const out = await fn(gate);
       const okResult = out.result as unknown as { ok?: boolean };
       if (okResult.ok !== false) {
         await gate.query(
           `INSERT INTO idempotency_keys (scope, actor_id, key, result, created_at)
-           VALUES ($1,$2,$3,$4,$5)
-           ON CONFLICT (scope, actor_id, key) DO NOTHING`,
+           VALUES ($1,$2,$3,$4,$5)`,
           [scope, actorId, key, JSON.stringify(out.result), Date.now()],
         );
       }
-      // 저장까지 마친 뒤 커밋 → 락 해제. 대기하던 재시도는 저장된 결과를 본다.
       await gate.query('COMMIT');
       return out;
     } catch (err) {
+      failed = err;
       await gate.query('ROLLBACK').catch(() => undefined);
       throw err;
     } finally {
-      gate.release();
+      gate.release(failed instanceof Error ? failed : undefined);
     }
   }
 }

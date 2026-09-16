@@ -1,11 +1,12 @@
+import { randomBytes } from 'node:crypto';
+
 /**
- * 서버 설정은 환경변수에서 온다. 로컬 개발이 별도 설정 없이 바로 돌도록
- * 합리적인 기본값을 둔다. 기본값은 scripts/db.sh 가 띄우는 Postgres 와 맞춘다.
+ * 서버 설정은 환경변수에서 온다. 자격증명은 소스 기본값을 두지 않는다.
  *
  * DB 접속은 두 형태를 받는다:
- *  - 운영/도커 로컬: DATABASE_URL (TCP, postgres://...) — 표준 경로.
+ *  - 운영: DATABASE_URL (TCP, postgres://...) — 표준 경로.
+ *  - 로컬 Docker: DB_PASSWORD 로 루프백 접속 문자열을 조립한다.
  *  - 테스트: PGHOST 에 유닉스 소켓 디렉터리를 주면 소켓으로 붙는다.
- *    (샌드박스에서 TCP 루프백이 막혀 있어 테스트는 자식 프로세스 + 소켓으로 돈다.)
  */
 
 export interface ServerConfig {
@@ -28,8 +29,6 @@ export interface ServerConfig {
   cookieSecure: boolean;
 }
 
-const DEFAULT_DATABASE_URL = 'postgres://postgres:postgres@127.0.0.1:5432/hello_talk';
-
 /** 콤마로 구분된 오리진 목록을 정리해 배열로 만든다. */
 const parseOrigins = (raw: string | undefined): string[] =>
   (raw ?? '')
@@ -37,20 +36,49 @@ const parseOrigins = (raw: string | undefined): string[] =>
     .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean);
 
+const localDatabaseUrl = (password: string): string =>
+  `postgres://postgres:${encodeURIComponent(password)}@127.0.0.1:5432/hello_talk`;
+
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): ServerConfig => {
-  const port = Number(env.PORT ?? 5311);
+  const rawPort = env.PORT?.trim();
+  const port = rawPort ? Number(rawPort) : 5311;
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('PORT 는 1~65535 사이의 정수여야 합니다.');
+  }
+
   const isProd = env.NODE_ENV === 'production';
-  // 명시적 플래그가 우선한다. 없으면 운영 환경에서만 secure 를 켠다.
+  const clientOrigins = parseOrigins(env.CLIENT_ORIGIN);
   const cookieSecure =
     env.COOKIE_SECURE === '1' ? true : env.COOKIE_SECURE === '0' ? false : isProd;
+  if (clientOrigins.length > 0 && !cookieSecure) {
+    throw new Error('CLIENT_ORIGIN 을 쓰려면 COOKIE_SECURE=1 이 필요합니다.');
+  }
+
+  const databaseUrl =
+    env.DATABASE_URL?.trim() ||
+    (env.DB_PASSWORD?.trim() ? localDatabaseUrl(env.DB_PASSWORD.trim()) : undefined);
+  const usesSocket = env.PGHOST?.startsWith('/') === true;
+  if (!databaseUrl && !usesSocket) {
+    throw new Error('DATABASE_URL 또는 로컬 개발용 DB_PASSWORD 가 필요합니다.');
+  }
+
+  const configuredCookieSecret = env.COOKIE_SECRET?.trim();
+  if (isProd && !configuredCookieSecret) {
+    throw new Error('운영에서는 COOKIE_SECRET 환경변수가 필요합니다.');
+  }
+  if (configuredCookieSecret && configuredCookieSecret.length < 32) {
+    throw new Error('COOKIE_SECRET 은 32자 이상이어야 합니다.');
+  }
+
   return {
-    port: Number.isFinite(port) ? port : 5311,
+    port,
     host: env.HOST ?? '127.0.0.1',
-    databaseUrl: env.DATABASE_URL ?? DEFAULT_DATABASE_URL,
-    // 세션 쿠키 서명용. 운영에서는 반드시 환경변수로 주입한다.
-    cookieSecret: env.COOKIE_SECRET ?? 'dev-only-insecure-cookie-secret-change-me',
+    // 소켓 접속에서는 makePool 이 PGHOST 를 우선하므로 이 값은 사용되지 않는다.
+    databaseUrl: databaseUrl ?? 'postgresql://local-socket',
+    // 로컬 개발에서 미지정하면 프로세스마다 새 무작위 키를 만들어 재시작 시 세션을 폐기한다.
+    cookieSecret: configuredCookieSecret ?? randomBytes(32).toString('hex'),
     devTools: env.DEV_TOOLS === '1' || env.NODE_ENV === 'test',
-    clientOrigins: parseOrigins(env.CLIENT_ORIGIN),
+    clientOrigins,
     cookieSecure,
   };
 };

@@ -37,8 +37,7 @@ const readMe = (): UserId | null => {
 };
 
 /**
- * 서버 세션을 세우고/닫는 부가 기능을 가진 저장소인지 오리 타입으로 확인한다.
- * (Repository 인터페이스는 동기 계약이라 여기에 세션 메서드를 넣지 않는다.)
+ * 서버 세션을 세우고/닫는 부가 기능은 Repository의 데이터 계약과 분리한다.
  */
 interface SessionAware {
   signInExisting(userId: UserId): Promise<User | null>;
@@ -87,9 +86,14 @@ export function StoreProvider({
         /* 시크릿 모드 등에서 막히면 메모리에만 유지한다 */
       }
       setMeId(id);
-      // 서버가 있으면 기존 사용자로 세션 쿠키를 세운다. 새로 만든 사용자는
-      // createUser 가 이미 세션을 세웠으므로 여기 호출은 그 세션을 재확인한다.
-      if (session) void session.signInExisting(id);
+      // 신규 생성 직후에는 createUser 가 이미 쿠키 세션을 세웠다. 먼저 현재 세션을 확인하고,
+      // 다른 사용자 선택일 때만 dev 전용 기존 사용자 로그인 경로를 호출한다.
+      if (session) {
+        void session.currentUser().then((current) => {
+          if (current?.id !== id) return session.signInExisting(id);
+          return current;
+        });
+      }
     },
     [session],
   );

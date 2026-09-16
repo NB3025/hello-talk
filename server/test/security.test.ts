@@ -295,8 +295,8 @@ describe('review security & scoping fixes', () => {
           payload: { text: '동시에 두 번', clientKey: 'concurrent-key-1' },
         });
 
-      // 동시에 여러 번 재시도한다.
-      const results = await Promise.all([send(), send(), send(), send()]);
+      // 풀 크기(10)를 넘는 요청이 겹쳐도 gate가 mutator와 같은 커넥션을 쓰므로 교착하지 않는다.
+      const results = await Promise.all(Array.from({ length: 12 }, () => send()));
       const ids = new Set(results.map((r) => r.json().messageId));
       // 모두 같은 messageId 를 돌려받는다(멱등).
       expect(ids.size).toBe(1);

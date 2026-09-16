@@ -5,18 +5,25 @@
 # 그래서 plain `docker run` 으로 컨테이너 하나를 띄우고, dev 와 test 가 같은
 # 명령으로 시작·정지·초기화할 수 있게 감싼다.
 #
-#   ./scripts/db.sh up      # 컨테이너를 띄우고 접속 가능해질 때까지 기다린다
+#   DB_PASSWORD='<local password>' ./scripts/db.sh up
 #   ./scripts/db.sh down    # 컨테이너를 멈추고 지운다 (데이터도 사라진다)
-#   ./scripts/db.sh reset   # down 후 up. 깨끗한 DB 로 다시 시작한다
+#   DB_PASSWORD='<local password>' ./scripts/db.sh reset
 #   ./scripts/db.sh status  # pg_isready 로 상태만 확인한다
-#   ./scripts/db.sh wait     # 접속 가능해질 때까지만 기다린다
+#   ./scripts/db.sh wait    # 접속 가능해질 때까지만 기다린다
 set -euo pipefail
 
 CONTAINER="${DB_CONTAINER:-hello-talk-pg}"
 IMAGE="${DB_IMAGE:-postgres:16-alpine}"
 DB_NAME="${DB_NAME:-hello_talk}"
-DB_PASSWORD="${DB_PASSWORD:-postgres}"
+DB_PASSWORD="${DB_PASSWORD:-}"
 DB_PORT="${DB_PORT:-5432}"
+
+require_password() {
+  if [ -z "$DB_PASSWORD" ]; then
+    echo "DB_PASSWORD 환경변수를 설정해 주세요." >&2
+    exit 2
+  fi
+}
 
 wait_ready() {
   echo "PostgreSQL 준비를 기다리는 중 (${CONTAINER})..."
@@ -34,13 +41,14 @@ wait_ready() {
 
 case "${1:-up}" in
   up)
+    require_password
     if [ -n "$(docker ps -aq -f name="^${CONTAINER}$")" ]; then
       docker start "$CONTAINER" >/dev/null
     else
       docker run --name "$CONTAINER" \
         -e POSTGRES_PASSWORD="$DB_PASSWORD" \
         -e POSTGRES_DB="$DB_NAME" \
-        -p "${DB_PORT}:5432" \
+        -p "127.0.0.1:${DB_PORT}:5432" \
         -d "$IMAGE" >/dev/null
     fi
     wait_ready
@@ -50,11 +58,12 @@ case "${1:-up}" in
     echo "컨테이너를 제거했습니다: ${CONTAINER}"
     ;;
   reset)
+    require_password
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     docker run --name "$CONTAINER" \
       -e POSTGRES_PASSWORD="$DB_PASSWORD" \
       -e POSTGRES_DB="$DB_NAME" \
-      -p "${DB_PORT}:5432" \
+      -p "127.0.0.1:${DB_PORT}:5432" \
       -d "$IMAGE" >/dev/null
     wait_ready
     ;;

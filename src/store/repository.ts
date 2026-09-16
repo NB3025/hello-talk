@@ -6,15 +6,18 @@ import type { GiftAction } from '../domain/gift';
  * 지금 구현은 localStorage + BroadcastChannel 이지만, UI 는 그 사실을 모른다.
  * 서버를 붙일 때 이 인터페이스를 구현한 클래스를 하나 더 만들어 갈아끼운다.
  */
+export type RepositoryResult<T> = T | Promise<T>;
+
 export interface Repository {
   /** 현재 스냅샷. 내용이 바뀌지 않았다면 반드시 같은 참조를 돌려준다. */
   snapshot(): Db;
   /** 데이터가 바뀔 때마다 호출된다. 다른 탭에서 바뀐 경우도 포함한다. */
   subscribe(listener: () => void): () => void;
 
-  createUser(name: string, statusMessage?: string): User;
-  /** 친구 코드로 등록. 실패 이유를 사람이 읽을 문장으로 돌려준다. */
-  addFriendByCode(ownerId: UserId, code: string): AddFriendResult;
+  /** 로컬은 즉시, 서버는 권위 있는 응답을 받은 뒤 사용자를 돌려준다. */
+  createUser(name: string, statusMessage?: string): RepositoryResult<User>;
+  /** 친구 코드로 등록. 서버 모드에서는 서버만 아는 코드를 조회한 뒤 결과를 돌려준다. */
+  addFriendByCode(ownerId: UserId, code: string): RepositoryResult<AddFriendResult>;
   toggleFavorite(ownerId: UserId, friendId: UserId): void;
   removeFriend(ownerId: UserId, friendId: UserId): void;
 

@@ -55,8 +55,9 @@ WebSocket 실시간을 제공하고, 권한과 멱등성을 서버에서 강제�
 
 프런트엔드는 `VITE_API_BASE` 가 설정되면 `ApiRepository`(`src/store/apiRepository.ts`)를 골라,
 `GET /api/snapshot` 으로 인메모리 미러를 하이드레이트하고 `/ws` 푸시로 살아 있게 유지한다.
-설정되지 않으면 `LocalRepository`(데모 모드)를 쓴다. `Repository` 인터페이스는 동기 계약이라
-두 구현 모두 동일한 시그니처를 만족한다 — 화면 코드는 어느 쪽인지 모른다.
+설정되지 않으면 `LocalRepository`(데모 모드)를 쓴다. `Repository` 의 스냅샷/구독은 동기라
+렌더 경로가 두 구현에서 같고, 서버 권위가 필요한 사용자 생성·친구 코드는 `await` 가능한 결과를
+돌려준다. 화면은 저장소가 로컬인지 서버인지 모른다.
 
 ### 로컬 개발 순서
 
@@ -64,11 +65,13 @@ WebSocket 실시간을 제공하고, 권한과 멱등성을 서버에서 강제�
 # 1) PostgreSQL (로컬은 Docker, 아래 "배포 · 운영"의 주의 참고)
 cd server
 npm install
-npm run db:up                 # docker run 으로 postgres 컨테이너 기동 (scripts/db.sh)
+export DB_PASSWORD="$(openssl rand -hex 24)"
+export COOKIE_SECRET="$(openssl rand -hex 32)"
+npm run db:up                 # 127.0.0.1 에만 postgres 컨테이너 기동 (scripts/db.sh)
 
-# 2) 백엔드 (부팅 시 자동 마이그레이션)
-COOKIE_SECRET=dev-secret npm run dev     # http://127.0.0.1:5311  (tsx watch)
-curl -s http://127.0.0.1:5311/health     # => {"status":"ok"}
+# 2) 백엔드 (위 환경변수를 이어받고, 부팅 시 자동 마이그레이션)
+npm run dev                             # http://127.0.0.1:5311  (tsx watch)
+curl -s http://127.0.0.1:5311/health   # => {"status":"ok"}
 
 # 3) 프런트엔드 — API 를 백엔드로 향하게 하고 dev 서버 기동 (다른 터미널)
 cd ..
@@ -92,10 +95,11 @@ VITE_API_BASE=http://127.0.0.1:5311 npm run dev   # http://127.0.0.1:5273
 | `VITE_API_BASE` | 프런트엔드 | (없음) | 있으면 서버 모드(ApiRepository), 없으면 데모 모드(LocalRepository) |
 | `PORT` | 백엔드 | `5311` | 서버 포트 |
 | `HOST` | 백엔드 | `127.0.0.1` | 바인딩 호스트 |
-| `DATABASE_URL` | 백엔드 | `postgres://postgres:postgres@127.0.0.1:5432/hello_talk` | PostgreSQL 접속(TCP) |
-| `COOKIE_SECRET` | 백엔드 | dev 전용 값 | 세션 쿠키 서명. **운영에서는 반드시 주입** |
+| `DATABASE_URL` | 백엔드 | `DB_PASSWORD` 로 로컬 URL 조립 | 운영 PostgreSQL 접속 URL은 비밀 저장소에서 주입 |
+| `DB_PASSWORD` | 백엔드/DB 스크립트 | (없음) | 로컬 Docker 전용. 소스 기본값 없이 명시적으로 설정 |
+| `COOKIE_SECRET` | 백엔드 | 로컬은 프로세스별 무작위 값 | 운영에서는 32자 이상 값을 비밀 저장소에서 반드시 주입 |
 | `CLIENT_ORIGIN` | 백엔드 | (없음) | 크로스 오리진 프런트엔드 주소(콤마 구분). 있으면 CORS 를 그 오리진만 허용+credentials, 쿠키 `SameSite=None` |
-| `COOKIE_SECURE` | 백엔드 | `NODE_ENV=production` 이면 켜짐 | `1`=세션 쿠키에 `Secure` 강제, `0`=끄기. 로컬 http 개발은 꺼 둔다 |
+| `COOKIE_SECURE` | 백엔드 | `NODE_ENV=production` 이면 켜짐 | `1`=세션 쿠키에 `Secure` 강제. `CLIENT_ORIGIN` 과 함께 쓸 때 필수 |
 | `DEV_TOOLS` | 백엔드 | (없음) | `1`(또는 `NODE_ENV=test`)이면 dev 전용 엔드포인트 개방: seed/reset, 사용자 디렉터리(`/api/dev/users`), 그리고 **기존 임의 사용자로의 `{userId}` 로그인**(운영엔 없음) |
 
 ### 백엔드 아키텍처 요약

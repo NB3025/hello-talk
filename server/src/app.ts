@@ -211,8 +211,8 @@ export const buildApp = (deps: AppDeps): FastifyInstance => {
     if (!uid) return;
     const { chatId } = req.params as { chatId: string };
     const { text, clientKey } = (req.body ?? {}) as { text?: string; clientKey?: string };
-    const m = await repo.withIdempotency('message', uid, clientKey, () =>
-      repo.sendMessage(chatId, uid, text ?? ''),
+    const m = await repo.withIdempotency('message', uid, clientKey, (client) =>
+      repo.sendMessage(chatId, uid, text ?? '', client),
     );
     emit(m, 'messages');
     return m.result;
@@ -240,8 +240,8 @@ export const buildApp = (deps: AppDeps): FastifyInstance => {
       return reply.code(400).send({ error: 'receiverId 와 productId 가 필요합니다.' });
     }
     // 보낸 사람은 세션 사용자로 강제한다.
-    const m = await repo.withIdempotency('gift', uid, clientKey, () =>
-      repo.sendGift({ senderId: uid, receiverId, productId, message: message ?? '' }),
+    const m = await repo.withIdempotency('gift', uid, clientKey, (client) =>
+      repo.sendGift({ senderId: uid, receiverId, productId, message: message ?? '' }, client),
     );
     emit(m, 'gifts');
     return m.result;

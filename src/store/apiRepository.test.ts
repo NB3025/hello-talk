@@ -21,6 +21,8 @@ class FakeBackend {
   requireSessionForSnapshot = false;
   /** requireSessionForSnapshot 이 켜졌을 때 세션이 있는지. */
   hasSession = false;
+  /** 운영처럼 현재 사용자와 친구만 스냅샷에 포함할지. */
+  scopeSnapshots = false;
 
   makeUser(name: string): User {
     const u: User = {
@@ -56,11 +58,22 @@ class FakeBackend {
     }
 
     if (path === '/api/snapshot' && method === 'GET') {
-      // 서버 모드의 스코핑된 스냅샷은 로그인 전에는 세션이 없어 401 이다(전체 로스터 없음).
       if (this.requireSessionForSnapshot && !this.hasSession) {
         return json(401, { error: '로그인이 필요합니다.' });
       }
-      return json(200, { db: this.db });
+      if (!this.scopeSnapshots) return json(200, { db: this.db });
+
+      const owner = this.db.users[0];
+      if (!owner) return json(200, { db: emptyDb() });
+      const scoped = structuredClone(this.db);
+      const friendIds = new Set(
+        scoped.friendships.filter((f) => f.ownerId === owner.id).map((f) => f.friendId),
+      );
+      scoped.users = scoped.users.filter((u) => u.id === owner.id || friendIds.has(u.id));
+      scoped.friendships = scoped.friendships.filter(
+        (f) => f.ownerId === owner.id || f.friendId === owner.id,
+      );
+      return json(200, { db: scoped });
     }
     // dev 전용 사용자 디렉터리. 로그인 화면 목록용. 세션 없이도 열린다(devTools).
     if (path === '/api/dev/users' && method === 'GET') {
@@ -73,6 +86,7 @@ class FakeBackend {
         return u ? json(200, { user: u }) : json(404, { error: 'no' });
       }
       const u = this.makeUser(String(body.name));
+      this.hasSession = true;
       this.broadcast('users');
       return json(201, { user: u });
     }
@@ -81,8 +95,22 @@ class FakeBackend {
       return u ? json(200, { user: u }) : json(401, { error: 'no' });
     }
     if (path === '/api/friends' && method === 'POST') {
+      const normalized = String(body.code).replace(/[\s-]/g, '').toUpperCase();
+      const friend = this.db.users.find(
+        (u) => u.code.replace(/[\s-]/g, '').toUpperCase() === normalized,
+      );
+      const owner = this.db.users[0];
+      if (!friend || !owner) return json(200, { ok: false, reason: '사용자가 없습니다.' });
+      if (!this.db.friendships.some((f) => f.ownerId === owner.id && f.friendId === friend.id)) {
+        this.db.friendships.push({
+          ownerId: owner.id,
+          friendId: friend.id,
+          createdAt: Date.now(),
+          favorite: false,
+        });
+      }
       this.broadcast('friends');
-      return json(200, { ok: true });
+      return json(200, { ok: true, friend });
     }
     if (path === '/api/chats/direct' && method === 'POST') {
       // 서버는 결정론적 방 id 를 준다.
@@ -206,21 +234,15 @@ describe('ApiRepository 하이드레이트', () => {
 });
 
 describe('ApiRepository createUser', () => {
-  it('임시 사용자를 동기로 돌려주고 서버 사용자로 재조정한다', async () => {
+  it('서버가 확정한 사용자를 기다려 반환하고 같은 id 로 미러를 유지한다', async () => {
     const backend = new FakeBackend();
     const repo = make(backend, false);
     await tick();
 
-    const u = repo.createUser('새사람');
-    expect(u.name).toBe('새사람');
-    // 즉시 미러에 있다(동기 계약).
-    expect(repo.snapshot().users.some((x) => x.id === u.id)).toBe(true);
-
-    await tick();
-    // 서버 사용자로 대체됐다.
-    const names = repo.snapshot().users.map((x) => x.name);
-    expect(names).toContain('새사람');
-    expect(repo.snapshot().users.filter((x) => x.name === '새사람')).toHaveLength(1);
+    const user = await repo.createUser('새사람');
+    expect(user.name).toBe('새사람');
+    expect(user.id).toMatch(/^srv-/);
+    expect(repo.snapshot().users.filter((x) => x.id === user.id)).toHaveLength(1);
     repo.dispose();
   });
 });
@@ -423,8 +445,27 @@ describe('ApiRepository 선물', () => {
   });
 });
 
-describe('ApiRepository addFriendByCode 롤백', () => {
-  it('서버가 거절하면 낙관적 친구 추가를 되돌린다', async () => {
+describe('ApiRepository addFriendByCode', () => {
+  it('운영 스코핑 미러에 없는 사람도 서버에서 코드로 찾아 추가한다', async () => {
+    const backend = new FakeBackend();
+    const me = backend.makeUser('나');
+    const other = backend.makeUser('상대');
+    backend.devTools = false;
+    backend.requireSessionForSnapshot = true;
+    backend.hasSession = true;
+    backend.scopeSnapshots = true;
+    const repo = make(backend, false);
+    await tick();
+
+    expect(repo.snapshot().users.map((u) => u.id)).toEqual([me.id]);
+    const result = await repo.addFriendByCode(me.id, other.code);
+    expect(result).toEqual({ ok: true, friend: other });
+    expect(repo.snapshot().users.some((u) => u.id === other.id)).toBe(true);
+    expect(repo.snapshot().friendships).toHaveLength(1);
+    repo.dispose();
+  });
+
+  it('서버 거절 이유를 낙관적 성공으로 바꾸지 않는다', async () => {
     const backend = new FakeBackend();
     const me = backend.makeUser('나');
     const other = backend.makeUser('상대');
@@ -432,12 +473,9 @@ describe('ApiRepository addFriendByCode 롤백', () => {
     await tick();
 
     backend.reject.add('POST /api/friends');
-    const r = repo.addFriendByCode(me.id, other.code);
-    expect(r.ok).toBe(true); // 낙관적 성공
-    expect(repo.snapshot().friendships).toHaveLength(1);
-
-    await tick();
-    expect(repo.snapshot().friendships).toHaveLength(0); // 롤백
+    const result = await repo.addFriendByCode(me.id, other.code);
+    expect(result).toEqual({ ok: false, reason: '서버가 거절함' });
+    expect(repo.snapshot().friendships).toHaveLength(0);
     repo.dispose();
   });
 });
