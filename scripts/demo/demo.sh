@@ -54,6 +54,24 @@ echo "API 주소   → $API_BASE  (장애 프록시 $PROXY_PORT → 백엔드 $B
 export DB_PASSWORD="${DB_PASSWORD:-$(openssl rand -hex 24)}"
 export COOKIE_SECRET="${COOKIE_SECRET:-$(openssl rand -hex 32)}"
 
+# ── 지난 실행이 남긴 프로세스 정리. Ctrl+C 가 자식의 자식(tsx, vite, node)까지 못 내린 경우가 있다 ──
+STALE_PATTERN='scripts/demo/fault-proxy.mjs|scripts/demo/bot.mjs|tsx watch src/index.ts|vite --host 127.0.0.1 --port 5273'
+stale="$(pgrep -f "$STALE_PATTERN" || true)"
+if [ -n "$stale" ]; then
+  echo "지난 실행의 프로세스를 정리한다: $(echo "$stale" | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  kill $stale 2>/dev/null || true; sleep 1
+  # shellcheck disable=SC2086
+  kill -9 $stale 2>/dev/null || true
+fi
+port_busy() { (command -v ss >/dev/null && ss -ltn 2>/dev/null | grep -q ":$1 ") || (command -v lsof >/dev/null && lsof -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1); }
+for port in "$BACKEND_PORT" "$PROXY_PORT" "$FRONT_PORT"; do
+  if port_busy "$port"; then
+    echo "포트 $port 를 다른 프로세스가 쓰고 있습니다. 확인: ss -ltnp | grep :$port  (또는 lsof -iTCP:$port)" >&2
+    exit 2
+  fi
+done
+
 [ -d node_modules ] || npm install
 [ -d server/node_modules ] || (cd server && npm install)
 
@@ -78,7 +96,15 @@ EOF
 }
 
 PIDS=()
-cleanup() { echo; echo "내리는 중..."; for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done; wait 2>/dev/null || true; }
+kill_tree() { local pid=$1; for c in $(pgrep -P "$pid" 2>/dev/null || true); do kill_tree "$c"; done; kill "$pid" 2>/dev/null || true; }
+cleanup() {
+  trap - EXIT INT TERM
+  echo; echo "내리는 중..."
+  for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill_tree "$p"; done
+  sleep 1
+  pkill -9 -f "$STALE_PATTERN" 2>/dev/null || true   # 살아남은 tsx/vite/node 마무리
+  wait 2>/dev/null || true
+}
 trap cleanup EXIT INT TERM
 
 start_postgres
@@ -99,4 +125,14 @@ echo "  종료: Ctrl+C"
 echo "================================================================"
 echo
 VITE_API_BASE="$API_BASE" npx vite "${VITE_ARGS[@]}" & PIDS+=($!)
-wait
+
+# 자식 하나가 죽으면(포트 충돌 등) 반쪽만 남기지 않고 전부 내린다
+while :; do
+  for p in "${PIDS[@]}"; do
+    if ! kill -0 "$p" 2>/dev/null; then
+      echo "프로세스 $p 가 끝났습니다. 전체를 내립니다." >&2
+      exit 1
+    fi
+  done
+  sleep 2
+done

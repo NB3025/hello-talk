@@ -5,6 +5,7 @@
 ```bash
 npm run demo              # 전부 띄운다. 마지막 줄의 주소를 브라우저에서 연다. 종료는 Ctrl+C
 npm run demo -- --print   # 감지한 설정만 본다
+npm run demo:reset        # 꼬였을 때. 남은 프로세스를 내리고 포트를 비운다 (--repo, --db, --all 은 아래 표)
 ```
 
 | 파일 | 역할 |
@@ -12,6 +13,7 @@ npm run demo -- --print   # 감지한 설정만 본다
 | `demo.sh` | PostgreSQL → 백엔드(5311, `DEV_TOOLS=1`) → 봇 → 장애 프록시(5399) → 프런트엔드(5273)를 순서대로 띄운다. code-server의 `VSCODE_PROXY_URI`를 읽어 CloudFront 도메인용 설정(Vite 허용 호스트, `/absproxy/5273/` base, API 주소)을 알아서 맞춘다. 설치와 sudo는 하지 않는다 |
 | `fault-proxy.mjs` | 브라우저와 백엔드 사이. `DROP_NTH`번째(기본 1) 메시지 전송 `POST /api/chats/:id/messages`를 백엔드까지 보내 저장시킨 뒤 응답만 끊는다. `FRONT_TARGET`을 주면 `/api`, `/health`, `/ws` 외의 요청을 Vite로 넘겨 프런트엔드와 API를 한 포트로 내보낸다. 모든 응답에 `Connection: close` |
 | `bot.mjs` | 상대방. 서버 API로 봇 사용자를 만들고, `/api/dev/users`로 새 사람을 찾아 친구 추가 + 1:1 방 열기 + 인사한다. 받은 메시지마다 "N번째 메시지 받았어요: 「…」"로 답하고, 바로 앞과 같은 내용이면 "같은 내용이네요. 두 번 보내셨나요?"를 덧붙인다. 프록시를 거치지 않고 백엔드에 직접 붙는다 |
+| `reset.sh` | 꼬였을 때. `npm run demo:reset`은 지난 실행의 프로세스를 내리고 세 포트를 비운다(언제나 안전). `-- --repo`는 미커밋 변경을 `backup/<시각>` 브랜치에 커밋해 두고 `origin/main`으로 되돌린다(내 브랜치는 유지). `-- --db`는 시연 DB 스키마를 비운다(다음 `npm run demo`가 다시 만든다). `-- --all`은 셋 다 |
 | `prepare-local-pg.sh` | Docker가 없는 Ubuntu에서 로컬 PostgreSQL을 한 번 준비한다(sudo, apt). 끝나면 `DATABASE_URL`을 알려 준다 |
 
 ## 시연 순서
