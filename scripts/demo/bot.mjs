@@ -33,12 +33,12 @@ const api = async (method, path, body) => {
 
 const log = (...a) => console.log(`[bot ${new Date().toLocaleTimeString('ko-KR', { hour12: false })}]`, ...a);
 
-// ── 1. 봇 사용자 ────────────────────────────────────────────────────────────
-const { user: me } = await api('POST', '/api/auth/session', {
-  name: BOT_NAME,
-  statusMessage: '테스트 봇 · 받은 메시지를 세어 답합니다',
-});
-log(`로그인: ${me.name} (${me.code}, id ${me.id})`);
+// ── 1. 봇 사용자. 같은 이름의 봇이 이미 있으면 그 사람으로 다시 로그인한다(재시작해도 같은 봇, 기존 방이 이어진다) ──
+const existing = (await api('GET', '/api/dev/users')).users.find((u) => u.name === BOT_NAME);
+const { user: me } = existing
+  ? await api('POST', '/api/auth/session', { userId: existing.id })
+  : await api('POST', '/api/auth/session', { name: BOT_NAME, statusMessage: '테스트 봇 · 받은 메시지를 세어 답합니다' });
+log(`${existing ? '다시 로그인' : '새로 만듦'}: ${me.name} (${me.code}, id ${me.id})`);
 log(`브라우저에서 이름을 만들면 ${POLL_MS}ms 안에 봇이 친구 추가 + 먼저 인사합니다. 채팅 탭에서 방을 여세요.`);
 
 const greeted = new Set(); // userId
@@ -51,11 +51,11 @@ const tick = async () => {
   const { users } = await api('GET', '/api/dev/users');
   const { db } = await api('GET', '/api/snapshot');
 
-  // 새 사람에게 친구 추가 + 방 열기 + 인사
+  // 봇과 1:1 방이 아직 없는 사람에게 친구 추가 + 방 열기 + 인사. 재시작 뒤에는 이미 방이 있는 사람은 건너뛴다
+  for (const c of db.chats) if (c.memberIds.includes(me.id)) for (const id of c.memberIds) greeted.add(id);
   for (const u of users) {
     if (u.id === me.id || greeted.has(u.id)) continue;
     greeted.add(u.id);
-    if (first) continue; // 봇이 뜨기 전부터 있던 사람에게는 말을 걸지 않는다
     await api('POST', '/api/friends', { code: u.code }).catch((e) => log(`친구 추가 실패 ${u.name}: ${e.message}`));
     const { chatId } = await api('POST', '/api/chats/direct', { targetId: u.id });
     await api('POST', `/api/chats/${chatId}/messages`, {
