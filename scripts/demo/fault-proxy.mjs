@@ -2,7 +2,7 @@
 // hello-talk 1-6 강사용 장애 프록시.
 // 프런트엔드와 백엔드 사이에 서서 요청은 전부 백엔드로 보내되, 메시지 전송(POST /api/chats/:id/messages)의
 // 응답을 N번째 요청에서 한 번 끊는다. 백엔드는 저장을 마쳤지만 브라우저는 "전송 실패"를 본다.
-// 사용자가 재시도하면 클라이언트가 새 clientKey 를 만들어 같은 메시지가 두 번 저장된다.
+// 사용자가 재시도하면 무슨 일이 생기는지가 워크샵 실습의 출발점이다.
 //
 //   node fault-proxy.mjs                       # 5399 → 5311, 첫 메시지 전송의 응답을 끊는다
 //   DROP_NTH=3 node fault-proxy.mjs            # 세 번째 메시지 전송에서 끊는다
@@ -45,7 +45,7 @@ const server = http.createServer((req, res) => {
         return;
       }
       // keep-alive 소켓을 재사용하지 않게 한다. Chrome 은 재사용 소켓이 응답 없이 끊기면 POST 도
-      // 조용히 한 번 더 보내는데(같은 clientKey → 서버가 중복 제거), 그러면 "실패"가 화면에 안 뜬다.
+      // 조용히 한 번 더 보내는데, 그러면 "실패"가 화면에 안 뜬다.
       res.writeHead(up.statusCode ?? 502, { ...up.headers, connection: 'close' });
       up.pipe(res);
     },
