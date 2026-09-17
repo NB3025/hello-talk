@@ -22,10 +22,13 @@ npm run dev        # http://127.0.0.1:5273
 | 명령 | 하는 일 |
 |---|---|
 | `npm run dev` | 개발 서버 (루프백만 바인딩) |
+| `npm run demo` | 워크샵용 실패 시연 전체 실행 |
 | `npm run build` | 타입체크 후 프로덕션 빌드 → `dist/` |
 | `npm run preview` | 빌드 결과 확인 |
 | `npm test` | Vitest 1회 실행 |
 | `npm run typecheck` | 타입만 검사 |
+
+실패 시연(워크샵용): `npm run demo`. 자세한 것은 `scripts/demo/README.md`를 참고한다.
 
 ## 두 사람이 실제로 대화하는 방법 (데모 모드)
 
